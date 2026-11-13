@@ -44,6 +44,32 @@ viu da VSL, o checkout que abandonou, a mensagem de recuperação e a compra mor
 
 Produto novo, sequência de recuperação nova e fluxo novo do robô são **dado** em `config.json`, nenhuma linha de código.
 
+## Conexões (painel em `/painel/conexoes`)
+
+O painel abre por login (`/entrar`, com o `ADMIN_TOKEN`; o cookie guarda um derivado do token, nunca o token).
+
+- **WhatsApp pela Evolution API**, o mesmo caminho do `maus-conexoes`: o funil cria uma instância só dele, mostra o QR
+  no painel e o dono lê com o celular. A chave da Evolution fica no servidor. Teto de 300 mensagens em 24 h
+  (`FUNIL_TETO_WHATSAPP_DIA`) contra banimento do número. Sem Evolution, a API oficial da Meta (`WA_CLOUD_TOKEN`).
+- **Telegram por bot oficial** (`TELEGRAM_BOT_TOKEN` e `TELEGRAM_BOT_USUARIO`, criados no @BotFather): a página do Pix
+  mostra "Receber o acesso pelo Telegram", o `/start <pedido>` liga o chat ao pedido e o robô responde no bot. O webhook
+  tem um segredo derivado do token no caminho. Não usa a conta pessoal do dono: aviso automático em volume por conta
+  pessoal derruba a credencial de aplicativo.
+- **Integrações pela Composio** (`COMPOSIO_API_KEY`): o dono conecta Gmail, Planilhas, HubSpot, Notion, Slack etc. pelo
+  link da Composio, e o `config.json` diz o que rodar em cada evento:
+
+```json
+"integracoes": [
+  {"evento": "compra", "ferramenta": "GOOGLESHEETS_SPREADSHEETS_VALUES_APPEND",
+   "argumentos": {"spreadsheetId": "...", "range": "Vendas!A1", "values": [["{pedido}", "{nome}", "{email}", "{valor}"]]}}
+]
+```
+  Eventos: `checkout` e `compra`. Campos: `{pedido}`, `{nome}`, `{email}`, `{telefone}`, `{produto}`, `{valor}`, `{status}`.
+  Com `EMAIL_VIA=composio`, o e-mail de acesso sai do Gmail conectado.
+
+A Genesis hospeda uma instância em https://funil.genesisinnovation.com.br (app + Evolution própria num compose, túnel de
+um hostname): `apps/factory/deploy/factory01/instalar-funil-aberto.sh` no repositório da Genesis.
+
 ## Rodar
 
     git clone https://github.com/thiagopatzdorf/funil-aberto && cd funil-aberto
@@ -55,10 +81,12 @@ Testes: `python3 -m pytest -q tests` (sobem o servidor de verdade e percorrem o 
 
 | Variável | Para quê | Sem ela |
 |---|---|---|
-| `ADMIN_TOKEN` | painel e API admin | painel fechado |
+| `ADMIN_TOKEN` | login do painel e API admin (`Authorization: Bearer`) | painel fechado |
 | `WEBHOOK_SECRET` | assinatura HMAC-SHA256 (`X-Assinatura`) do webhook de pagamento e da entrada do robô | webhook recusado |
 | `META_PIXEL_ID`, `META_CAPI_TOKEN` (`META_TEST_EVENT_CODE`) | Conversions API | evento simulado |
 | `EVOLUTION_URL`, `EVOLUTION_KEY`, `EVOLUTION_INSTANCIA` ou `WA_CLOUD_TOKEN`, `WA_PHONE_ID` | WhatsApp | mensagem simulada |
+| `TELEGRAM_BOT_TOKEN`, `TELEGRAM_BOT_USUARIO` | Telegram | mensagem simulada |
+| `COMPOSIO_API_KEY` (`EMAIL_VIA=composio`) | integrações e Gmail | integração simulada |
 | `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASS`, `SMTP_FROM` | e-mail | mensagem simulada |
 | `META_AD_LIBRARY_TOKEN` | spy pela API | devolve o link da biblioteca pública |
 | `BASE_URL` | links nas mensagens | `http://localhost:8080` |

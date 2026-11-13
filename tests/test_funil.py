@@ -2,13 +2,9 @@ import hashlib
 import hmac
 import json
 import sys
-import threading
 import urllib.error
 import urllib.request
-from http.server import ThreadingHTTPServer
 from pathlib import Path
-
-import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
@@ -19,19 +15,6 @@ import pix
 
 SEGREDO = "segredo-de-teste"
 ADMIN = "admin-de-teste"
-
-
-@pytest.fixture()
-def srv(tmp_path, monkeypatch):
-    monkeypatch.setenv("DATA_DIR", str(tmp_path))
-    monkeypatch.setenv("WEBHOOK_SECRET", SEGREDO)
-    monkeypatch.setenv("ADMIN_TOKEN", ADMIN)
-    for k in ("META_PIXEL_ID", "META_CAPI_TOKEN", "EVOLUTION_URL", "WA_CLOUD_TOKEN", "SMTP_HOST", "META_AD_LIBRARY_TOKEN"):
-        monkeypatch.delenv(k, raising=False)
-    s = ThreadingHTTPServer(("127.0.0.1", 0), app.H)
-    threading.Thread(target=s.serve_forever, daemon=True).start()
-    yield f"http://127.0.0.1:{s.server_port}"
-    s.shutdown()
 
 
 class SemRedirect(urllib.request.HTTPRedirectHandler):
@@ -116,10 +99,26 @@ def test_token_de_membro_inventado_nao_abre_area(srv):
     assert st == 404
 
 
-def test_painel_fechado_sem_token_e_sem_admin_token_configurado(srv, monkeypatch):
-    assert req(f"{srv}/painel")[0] == 401
+def test_painel_sem_login_manda_para_entrar_e_token_na_url_nao_abre(srv):
+    st, h, _ = req(f"{srv}/painel")
+    assert st == 303 and h["Location"] == "/entrar"
+    assert req(f"{srv}/painel?token={ADMIN}")[0] == 303
+
+
+def test_login_abre_o_painel_e_o_cookie_nao_e_o_token(srv):
+    form = {"Content-Type": "application/x-www-form-urlencoded"}
+    assert req(f"{srv}/entrar", b"token=errado", form)[0] == 401
+    st, h, _ = req(f"{srv}/entrar", f"token={ADMIN}".encode(), form)
+    cookie = h["Set-Cookie"].split(";")[0]
+    assert st == 303 and "HttpOnly" in h["Set-Cookie"] and "SameSite=Strict" in h["Set-Cookie"] and ADMIN not in cookie
+    assert req(f"{srv}/painel", cab={"Cookie": cookie})[0] == 200
+    assert req(f"{srv}/painel/conexoes", cab={"Cookie": cookie})[0] == 200
+
+
+def test_sem_admin_token_configurado_nada_abre_o_painel(srv, monkeypatch):
     monkeypatch.setenv("ADMIN_TOKEN", "")
-    assert req(f"{srv}/painel?token=")[0] == 401
+    assert req(f"{srv}/entrar", b"token=", {"Content-Type": "application/x-www-form-urlencoded"})[0] == 401
+    assert req(f"{srv}/api/admin/funil", cab={"Authorization": "Bearer "})[0] == 401
 
 
 def test_recuperacao_segue_a_sequencia_e_para_quando_paga(srv):

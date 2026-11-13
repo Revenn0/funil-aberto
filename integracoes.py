@@ -13,6 +13,7 @@ import urllib.parse
 import urllib.request
 from email.message import EmailMessage
 
+import conexoes as cx
 import nucleo as n
 
 GRAPH = "https://graph.facebook.com/v21.0"
@@ -62,42 +63,35 @@ def enviar_capi(evento: dict) -> dict:
 # ---------- mensagens ----------
 
 def enviar(canal: str, para: str, texto: str, motivo: str = "", pedido_id: str = "") -> str:
-    """Envia por WhatsApp (Evolution API ou Cloud API) ou e-mail (SMTP). Devolve o status gravado."""
+    """Envia por WhatsApp (Evolution ou Cloud API), Telegram (bot) ou e-mail (SMTP ou Gmail pela Composio).
+    Devolve o status gravado: enviado, simulado (sem credencial) ou erro."""
+    canais = {"whatsapp": cx.whatsapp_enviar, "telegram": cx.telegram_enviar, "email": _email}
+    if canal not in canais:
+        raise ValueError(f"canal desconhecido: {canal}")
     try:
-        status = {"whatsapp": _whatsapp, "email": _email}[canal](para, texto)
-        erro = ""
-    except KeyError:
-        raise ValueError(f"canal desconhecido: {canal}") from None
-    except Exception as e:  # noqa: BLE001
+        status, erro = canais[canal](para, texto), ""
+    except cx.ErroConexao as e:
+        status, erro = "erro", str(e)
+    except Exception as e:  # noqa: BLE001 - mensagem que falha não pode derrubar a venda
         status, erro = "erro", type(e).__name__
     n.registrar_mensagem(canal, para, texto, motivo, pedido_id, status, erro)
     return status
 
 
-def _whatsapp(para: str, texto: str) -> str:
-    numero = n.telefone_e164(para)
-    if os.environ.get("EVOLUTION_URL") and os.environ.get("EVOLUTION_KEY") and os.environ.get("EVOLUTION_INSTANCIA"):
-        url = f"{os.environ['EVOLUTION_URL'].rstrip('/')}/message/sendText/{os.environ['EVOLUTION_INSTANCIA']}"
-        _post_json(url, {"number": numero, "text": texto}, {"apikey": os.environ["EVOLUTION_KEY"]})
-        return "enviado"
-    if os.environ.get("WA_CLOUD_TOKEN") and os.environ.get("WA_PHONE_ID"):
-        # A Cloud API oficial só aceita texto livre dentro da janela de 24 h; fora dela exige template aprovado.
-        url = f"{GRAPH}/{os.environ['WA_PHONE_ID']}/messages"
-        _post_json(url, {"messaging_product": "whatsapp", "to": numero, "type": "text", "text": {"body": texto}},
-                   {"Authorization": f"Bearer {os.environ['WA_CLOUD_TOKEN']}"})
-        return "enviado"
-    return "simulado"
-
-
 def _email(para: str, texto: str) -> str:
+    linhas = texto.strip().splitlines()
+    assunto = linhas[0][:120] if linhas else "Mensagem"
+    if os.environ.get("EMAIL_VIA") == "composio":
+        # Sai do Gmail que o dono conectou na Composio: o e-mail chega do endereço dele, não de um SMTP genérico.
+        cx.composio_executar("GMAIL_SEND_EMAIL", {"recipient_email": para, "subject": assunto, "body": texto})
+        return "enviado"
     host = os.environ.get("SMTP_HOST")
     if not host:
         return "simulado"
     msg = EmailMessage()
     msg["From"] = os.environ.get("SMTP_FROM", os.environ.get("SMTP_USER", ""))
     msg["To"] = para
-    linhas = texto.strip().splitlines()
-    msg["Subject"] = linhas[0][:120] if linhas else "Mensagem"
+    msg["Subject"] = assunto
     msg.set_content(texto)
     with smtplib.SMTP(host, int(os.environ.get("SMTP_PORT", "587")), timeout=15) as s:
         s.starttls()
@@ -119,7 +113,8 @@ def rodar_recuperacao(base_url: str) -> list[dict]:
     feitos = []
     for ped, etapa in n.recuperacao_pendente():
         n.avancar_recuperacao(ped["id"])
-        para = ped["telefone"] if etapa["canal"] == "whatsapp" else ped["email"]
+        para = {"whatsapp": ped["telefone"], "email": ped["email"],
+                "telegram": n.telegram_do_pedido(ped["id"]) or ""}.get(etapa["canal"], "")
         if not para:
             continue
         st = enviar(etapa["canal"], para, preencher(etapa["texto"], ped, base_url), "recuperacao", ped["id"])

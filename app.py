@@ -26,6 +26,7 @@ import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
+import conexoes as cx
 import integracoes as ig
 import nucleo as n
 import pix
@@ -40,11 +41,33 @@ def base_url() -> str:
     return os.environ.get("BASE_URL", "http://localhost:8080").rstrip("/")
 
 
-def admin_ok(cabecalho: str, query: dict) -> bool:
+def _selo_admin() -> str:
+    # O cookie guarda um derivado do token, nunca o token: um cookie vazado não vira a chave da API.
+    return hmac.new(os.environ.get("ADMIN_TOKEN", "").encode(), b"funil-admin-cookie", hashlib.sha256).hexdigest()
+
+
+def token_ok(dado: str) -> bool:
     token = os.environ.get("ADMIN_TOKEN", "")
-    dado = cabecalho.removeprefix("Bearer ").strip() or query.get("token", "")
     # Sem ADMIN_TOKEN configurado o painel fica fechado: aberto por padrão é vazamento de cliente.
-    return bool(token) and hmac.compare_digest(dado.encode(), token.encode())
+    return bool(token) and bool(dado) and hmac.compare_digest(dado.encode(), token.encode())
+
+
+def admin_ok(cabecalhos) -> bool:
+    """Bearer (API) ou cookie de sessão (painel). Token na URL não vale: URL vai para histórico e log de proxy."""
+    if token_ok(cabecalhos.get("Authorization", "").removeprefix("Bearer ").strip()):
+        return True
+    if not os.environ.get("ADMIN_TOKEN"):
+        return False
+    for parte in cabecalhos.get("Cookie", "").split(";"):
+        k, _, v = parte.strip().partition("=")
+        if k == "fa_adm" and hmac.compare_digest(v.encode(), _selo_admin().encode()):
+            return True
+    return False
+
+
+def cookie_admin(valor: str, idade: int) -> str:
+    seguro = "; Secure" if base_url().startswith("https://") else ""
+    return f"fa_adm={valor}; Path=/; HttpOnly; SameSite=Strict; Max-Age={idade}{seguro}"
 
 
 def assinatura_ok(corpo: bytes, assinatura: str) -> bool:
@@ -85,7 +108,7 @@ def pg_inicio() -> str:
     itens = "".join(f"<li><a href='/v/{e(p['slug'])}'>{e(p['nome'])}</a> (R$ {p['preco']:.2f})</li>" for p in n.config()["produtos"])
     return pagina("Funil Aberto", f"""<h1>Funil Aberto</h1><p>Tracker, VSL, checkout com Pix, área de membros,
 recuperação de carrinho, robô de WhatsApp e biblioteca de anúncios. Um processo, código aberto (MIT).</p>
-<div class=cx><b>Produtos</b><ul>{itens}</ul></div><p class=p>Painel do operador em <code>/painel?token=...</code>.
+<div class=cx><b>Produtos</b><ul>{itens}</ul></div><p class=p>Painel do operador em <a href="/painel">/painel</a>.
 Código: <a href='https://github.com/thiagopatzdorf/funil-aberto'>github.com/thiagopatzdorf/funil-aberto</a>.</p>""")
 
 
@@ -124,6 +147,7 @@ def pg_pix(p: dict, ped: dict) -> str:
 <textarea id=px rows=4 style='width:100%' readonly>{e(codigo)}</textarea>
 <button class=bt onclick="navigator.clipboard.writeText(document.getElementById('px').value);this.textContent='Copiado!'">Copiar código Pix</button></div>
 <p class=p>Pedido <code>{e(ped['id'])}</code>. Assim que o pagamento for confirmado o acesso chega em {e(ped['email'])}.</p>
+{f"<p><a class=bt href='{e(cx.telegram_link(ped['id']))}'>Receber o acesso pelo Telegram</a></p>" if cx.telegram_link(ped['id']) else ""}
 <p id=st class=ok>{'Acesso liberado: confira seu e-mail.' if pago else ''}</p>
 <script>setInterval(function(){{fetch('/api/pedido/{e(ped['id'])}').then(r=>r.json()).then(j=>{{if(j.status==='pago')
 document.getElementById('st').textContent='Pagamento confirmado! O acesso chegou no seu e-mail.'}})}},5000)</script>""", p["slug"])
@@ -157,12 +181,70 @@ def pg_painel() -> str:
         for r in n.funil())
     msgs = "".join(f"<tr><td>{e(m['canal'])}</td><td>{e(m['motivo'])}</td><td>{e(m['status'])}</td><td>{e(m['pedido'] or '')}</td></tr>"
                    for m in n.mensagens(20))
-    peds = "".join(f"<tr><td><code>{e(r['id'])}</code></td><td>{e(r['produto'])}</td><td>{e(r['status'])}</td><td>R$ {r['valor']:.2f}</td></tr>"
-                   for r in n.db().execute("select * from pedido order by criado desc limit 30"))
-    return pagina("Painel", f"""<h1>Painel</h1><h2>Funil por origem (visitantes únicos)</h2><table><tr><th>origem</th><th>campanha</th>
+    peds = "".join(
+        f"<tr><td><code>{e(r['id'])}</code></td><td>{e(r['produto'])}</td><td>{e(r['status'])}</td><td>R$ {r['valor']:.2f}</td><td>"
+        + (f"<form method=post action='/painel/pedido/{e(r['id'])}/pago'><button>Pix recebido</button></form>" if r['status'] == 'pendente' else "")
+        + "</td></tr>" for r in n.db().execute("select * from pedido order by criado desc limit 30"))
+    return pagina("Painel", f"""<h1>Painel</h1><p><a href="/painel/conexoes">Conexões (WhatsApp, Telegram, integrações)</a>
+· <a href="/sair">Sair</a></p><h2>Funil por origem (visitantes únicos)</h2><table><tr><th>origem</th><th>campanha</th>
 <th>visita</th><th>play</th><th>CTA</th><th>checkout</th><th>compra</th><th>receita</th></tr>{linhas}</table>
-<h2>Pedidos</h2><table>{peds}</table><p class=p>Confirmar Pix recebido: <code>POST /api/admin/pedido/&lt;id&gt;/pago</code>.</p>
+<h2>Pedidos</h2><table>{peds}</table><p class=p>“Pix recebido” libera o acesso e conta a venda (o mesmo que o webhook do banco).</p>
 <h2>Mensagens (recuperação e robô)</h2><table>{msgs}</table>""")
+
+
+TOOLKITS = ("gmail", "googlesheets", "hubspot", "notion", "slack", "googlecalendar", "airtable", "trello")
+
+
+def _estado_seguro(f) -> dict:
+    try:
+        return f()
+    except cx.ErroConexao as ex:
+        return {"configurado": True, "estado": "erro", "erro": str(ex)}
+
+
+def pg_conexoes(aviso: str = "") -> str:
+    wa, tg = _estado_seguro(cx.whatsapp_estado), _estado_seguro(cx.telegram_estado)
+    nomes = {"open": "conectado", "connecting": "aguardando leitura do QR", "close": "desconectado",
+             "ausente": "ainda não criado", "simulado": "sem servidor configurado", "erro": "erro"}
+    wa_acao = ("<form method=post action='/painel/conexoes/whatsapp/desconectar'><button>Desconectar</button></form>"
+               if wa["estado"] == "open" else
+               "<form method=post action='/painel/conexoes/whatsapp/qr'><button class=bt>Conectar pelo QR</button></form>"
+               if wa.get("configurado") else "<p class=p>Defina EVOLUTION_URL e EVOLUTION_KEY no servidor.</p>")
+    tg_acao = (f"<p>Bot <b>@{e(tg.get('bot', ''))}</b>.</p><form method=post action='/painel/conexoes/telegram/webhook'>"
+               "<button>Ligar o robô no bot</button></form>" if tg["estado"] == "open" else
+               "<p class=p>Crie um bot no @BotFather e defina TELEGRAM_BOT_TOKEN e TELEGRAM_BOT_USUARIO.</p>")
+    try:
+        contas = cx.composio_contas()
+    except cx.ErroConexao as ex:
+        contas, aviso = [], aviso or str(ex)
+    ligados = {c["toolkit"] for c in contas}
+    cp = ("".join(f"<li>{e(t)} {'<b class=ok>conectado</b>' if t in ligados else ''}"
+                  f"<form method=post action='/painel/conexoes/composio'><input type=hidden name=toolkit value='{t}'>"
+                  f"<button>{'Reconectar' if t in ligados else 'Conectar'}</button></form></li>" for t in TOOLKITS)
+          if os.environ.get("COMPOSIO_API_KEY") else "<p class=p>Defina COMPOSIO_API_KEY no servidor.</p>")
+    return pagina("Conexões", f"""<h1>Conexões</h1><p><a href="/painel">← Painel</a></p>
+{f"<p style='color:#f87171'>{e(aviso)}</p>" if aviso else ""}
+<div class=cx><h2>WhatsApp</h2><p>Estado: <b>{e(nomes.get(wa['estado'], wa['estado']))}</b>
+{f"<br><span class=p>{e(wa.get('erro', ''))}</span>" if wa.get('erro') else ""}</p>{wa_acao}
+<p class=p>Recuperação de carrinho, acesso e robô saem deste número. Teto de {cx.TETO_DIA} mensagens por dia contra banimento.</p></div>
+<div class=cx><h2>Telegram</h2><p>Estado: <b>{e(nomes.get(tg['estado'], 'conectado' if tg['estado'] == 'open' else tg['estado']))}</b></p>{tg_acao}
+<p class=p>O comprador abre o bot pelo link da página do Pix e passa a receber os avisos por lá.</p></div>
+<div class=cx><h2>Integrações (Composio)</h2><ul>{cp}</ul>
+<p class=p>Conecte o app e diga no config.json o que fazer em cada evento (ex.: compra → linha na planilha).</p></div>""")
+
+
+def pg_qr(qr: dict) -> str:
+    img = f"<img src='{e(qr['qr'])}' alt='QR do WhatsApp' width=300 height=300>" if qr.get("qr") else ""
+    cod = f"<p>Ou, em Aparelhos conectados → Conectar com número de telefone, digite <b>{e(qr['codigo'])}</b>.</p>" if qr.get("codigo") else ""
+    return pagina("Conectar WhatsApp", f"""<h1>Leia o QR no WhatsApp</h1>
+<p>WhatsApp → Configurações → Aparelhos conectados → Conectar um aparelho.</p><div class=cx>{img}{cod}</div>
+<p><a href="/painel/conexoes">Já li o QR: voltar</a></p>""").replace("<head>", "<head><meta http-equiv=refresh content='25;url=/painel/conexoes'>", 1)
+
+
+def pg_entrar(erro: str = "") -> str:
+    return pagina("Entrar", f"""<h1>Painel do funil</h1>{f"<p style='color:#f87171'>{e(erro)}</p>" if erro else ""}
+<form method=post action="/entrar"><label>Token de administrador<input name=token type=password required autocomplete=current-password></label>
+<button class=bt>Entrar</button></form>""")
 
 
 # ---------------- servidor ----------------
@@ -224,12 +306,18 @@ class H(BaseHTTPRequestHandler):
                 return self._resp(200, pg_membros(m), extra={"Cache-Control": "no-store"})
             if partes[:2] == ["api", "pedido"] and len(partes) == 3 and (ped := n.pedido(partes[2])):
                 return self._json(200, {"status": ped["status"]})  # só o status: o id é o segredo de quem comprou
-            if caminho == "/painel":
-                if not admin_ok(self.headers.get("Authorization", ""), q):
-                    return self._resp(401, pagina("Painel", "<p>Token inválido.</p>"))
-                return self._resp(200, pg_painel(), extra={"Cache-Control": "no-store"})
+            if caminho == "/entrar":
+                return self._resp(200, pg_entrar())
+            if caminho == "/sair":
+                return self._resp(303, "", extra={"Location": "/entrar", "Set-Cookie": cookie_admin("", 0)})
+            if partes[0] == "painel":
+                if not admin_ok(self.headers):
+                    return self._resp(303, "", extra={"Location": "/entrar"})
+                pagina_admin = {"/painel": pg_painel, "/painel/conexoes": pg_conexoes}.get(caminho)
+                if pagina_admin:
+                    return self._resp(200, pagina_admin(), extra={"Cache-Control": "no-store"})
             if partes[:2] == ["api", "admin"]:
-                if not admin_ok(self.headers.get("Authorization", ""), q):
+                if not admin_ok(self.headers):
                     return self._json(401, {"erro": "token"})
                 if partes[2:] == ["funil"]:
                     return self._json(200, n.funil(q.get("produto")))
@@ -244,7 +332,7 @@ class H(BaseHTTPRequestHandler):
             return self._json(500, {"erro": type(ex).__name__})
 
     def do_POST(self):
-        caminho, q = self._rota()
+        caminho, _q = self._rota()
         partes = caminho.strip("/").split("/")
         try:
             corpo = self._corpo()
@@ -261,6 +349,7 @@ class H(BaseHTTPRequestHandler):
                 except ValueError as ex:
                     return self._resp(400, pg_checkout(p, str(ex)))
                 ig.enviar_capi(ig.evento_capi("InitiateCheckout", ped, _visitante(vid), f"{base_url()}/c/{p['slug']}"))
+                cx.disparar("checkout", _contexto(ped, p))
                 return self._resp(303, "", extra={"Location": f"/c/{p['slug']}?pedido={ped['id']}"})
             if partes[0] == "m" and len(partes) == 3 and partes[2] == "feito" and (m := n.membro_por_token(partes[1])):
                 n.marcar_aula(m["id"], dict(urllib.parse.parse_qsl(corpo.decode())).get("aula", ""))
@@ -282,8 +371,23 @@ class H(BaseHTTPRequestHandler):
                     for r in respostas:
                         ig.enviar(canal, contato, r, "robo")
                 return self._json(200, {"respostas": respostas})
+            if caminho == "/entrar":
+                if not token_ok(dict(urllib.parse.parse_qsl(corpo.decode())).get("token", "")):
+                    time.sleep(1)  # freia quem tenta adivinhar o token
+                    return self._resp(401, pg_entrar("Token inválido."))
+                return self._resp(303, "", extra={"Location": "/painel", "Set-Cookie": cookie_admin(_selo_admin(), 43200)})
+            if partes[0] == "api" and len(partes) == 3 and partes[1] == "telegram":
+                segredo = cx.telegram_segredo_webhook()
+                if not segredo or not hmac.compare_digest(partes[2].encode(), segredo.encode()):
+                    return self._json(404, {"erro": "rota"})
+                telegram_entrada(json.loads(corpo or b"{}"))
+                return self._json(200, {"ok": True})
+            if partes[0] == "painel":
+                if not admin_ok(self.headers):
+                    return self._resp(303, "", extra={"Location": "/entrar"})
+                return self._painel_post(caminho, partes, corpo)
             if partes[:2] == ["api", "admin"]:
-                if not admin_ok(self.headers.get("Authorization", ""), q):
+                if not admin_ok(self.headers):
                     return self._json(401, {"erro": "token"})
                 if len(partes) == 5 and partes[2] == "pedido" and partes[4] == "pago":
                     return self._json(200, liberar(partes[3]))
@@ -300,9 +404,51 @@ class H(BaseHTTPRequestHandler):
             return self._json(400, {"erro": str(ex)[:200]})
 
 
+    def _painel_post(self, caminho: str, partes: list[str], corpo: bytes):
+        f = dict(urllib.parse.parse_qsl(corpo.decode()))
+        try:
+            if len(partes) == 4 and partes[1] == "pedido" and partes[3] == "pago":
+                liberar(partes[2])
+                return self._resp(303, "", extra={"Location": "/painel"})
+            if caminho == "/painel/conexoes/whatsapp/qr":
+                return self._resp(200, pg_qr(cx.whatsapp_qr()), extra={"Cache-Control": "no-store"})
+            if caminho == "/painel/conexoes/whatsapp/desconectar":
+                cx.whatsapp_desconectar()
+            elif caminho == "/painel/conexoes/telegram/webhook":
+                cx.telegram_registrar_webhook(base_url())
+            elif caminho == "/painel/conexoes/composio":
+                return self._resp(303, "", extra={"Location": cx.composio_link(f.get("toolkit", ""))})
+            else:
+                return self._resp(404, pagina("Não encontrado", "<h1>Página não encontrada</h1>"))
+        except cx.ErroConexao as ex:
+            return self._resp(502, pg_conexoes(str(ex)))
+        return self._resp(303, "", extra={"Location": "/painel/conexoes"})
+
+
+def telegram_entrada(update: dict) -> None:
+    """Mensagem que chega no bot: /start <pedido> liga o chat ao pedido; o resto vai para o robô."""
+    msg = update.get("message") or {}
+    chat, texto = str((msg.get("chat") or {}).get("id", "")), str(msg.get("text") or "")
+    if not chat:
+        return
+    if texto.startswith("/start"):
+        pid = texto.removeprefix("/start").strip()
+        if pid and n.ligar_telegram(pid, chat):
+            ig.enviar("telegram", chat, "Pronto! Você vai receber por aqui a confirmação do pagamento e o acesso.", "telegram", pid)
+            return
+    for r in ig.responder("telegram", chat, texto):
+        ig.enviar("telegram", chat, r.replace("{base}", base_url()), "robo")
+
+
 def _visitante(vid: str) -> dict | None:
     r = n.db().execute("select * from visitante where id=?", (vid,)).fetchone()
     return dict(r) if r else None
+
+
+def _contexto(ped: dict, p: dict) -> dict:
+    """O que um modelo de integração pode usar: {pedido}, {nome}, {email}, {telefone}, {produto}, {valor}, {status}."""
+    return {"pedido": ped["id"], "nome": ped["nome"], "email": ped["email"], "telefone": ped["telefone"],
+            "produto": p.get("nome", ped["produto"]), "valor": f"{ped['valor']:.2f}", "status": ped["status"]}
 
 
 def liberar(pid: str) -> dict:
@@ -315,6 +461,9 @@ def liberar(pid: str) -> dict:
         ig.enviar("email", ped["email"], f"Seu acesso ao {p.get('nome','')}\n\nEntre aqui: {link}", "acesso", pid)
         if ped["telefone"]:
             ig.enviar("whatsapp", ped["telefone"], f"Pagamento confirmado! Seu acesso: {link}", "acesso", pid)
+        if chat := n.telegram_do_pedido(pid):
+            ig.enviar("telegram", chat, f"Pagamento confirmado! Seu acesso: {link}", "acesso", pid)
+        cx.disparar("compra", _contexto(ped, p))
         ig.enviar_capi(ig.evento_capi("Purchase", ped, _visitante(ped["visitante"]), f"{base_url()}/c/{ped['produto']}"))
     return {"pedido": r["pedido"]["id"], "status": "pago", "novo": r["novo"]}
 

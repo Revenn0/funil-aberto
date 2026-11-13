@@ -1,0 +1,3 @@
+User-agent: *
+Allow: /
+Sitemap: https://funil.fabweb.io/sitemap.xml

@@ -41,6 +41,8 @@ create table if not exists mensagem(
   status text, criado real, erro text);
 create table if not exists conversa(
   canal text, contato text, fluxo text, passo integer, atualizado real, primary key(canal, contato));
+create table if not exists telegram(
+  pedido text primary key, chat text, criado real);
 create table if not exists anuncio(
   id integer primary key, fonte text, anunciante text, texto text, url text, nota text, criado real);
 """
@@ -284,3 +286,18 @@ def anuncios(q: str = "") -> list[dict]:
     like = f"%{q}%"
     return [dict(r) for r in db().execute(
         "select * from anuncio where anunciante like ? or texto like ? order by id desc limit 200", (like, like))]
+
+
+# ---------- Telegram: o chat do comprador ligado ao pedido pelo /start <pedido> ----------
+
+def ligar_telegram(pedido_id: str, chat: str) -> bool:
+    if not pedido(pedido_id):
+        return False
+    db().execute("insert into telegram(pedido, chat, criado) values(?,?,?) on conflict(pedido) do update set chat=excluded.chat",
+                 (pedido_id, str(chat)[:40], time.time()))
+    return True
+
+
+def telegram_do_pedido(pedido_id: str) -> str | None:
+    r = db().execute("select chat from telegram where pedido=?", (pedido_id,)).fetchone()
+    return r[0] if r else None
