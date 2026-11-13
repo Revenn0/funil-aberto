@@ -1,0 +1,88 @@
+# funil-aberto
+
+<!-- resumo: A operação de venda online (digital/DR) num processo só e de código aberto (MIT): tracker com atribuição por UTM e Meta CAPI, página de VSL com CTA no segundo certo, checkout com Pix direto na chave do vendedor (sem gateway), área de membros, recuperação de checkout abandonado por WhatsApp e e-mail, robô de mensagens por palavra-chave e biblioteca de anúncios; Python stdlib + SQLite. -->
+
+Nasceu de uma pergunta no X (13/11/2026): *"é possível fazer um open source que substitua todos os softwares que alguém usa numa
+operação de digital/DR/venda online? Tracker, VSL, Manychat, área de membros, spy, checkout, remarketing. Vejo todo mundo criando a própria;
+não faria mais sentido todos criarem uma só?"*
+
+Faz. Este repositório é essa uma só. Sem mensalidade, sem dependência, um `python3 app.py`.
+
+## Já existia? Em pedaços, sim. Junto, não.
+
+Pesquisado em 13/11/2026 antes de escrever uma linha (regra da casa: consulte antes de assar).
+
+| Peça | Open source que já existe | Por que não bastava |
+|---|---|---|
+| Tracker | Umami, Plausible, Matomo, PostHog | medem visita, não ligam o anúncio à venda nem mandam a compra para a Meta (CAPI) |
+| VSL | Video.js, Plyr | player, não página de venda com CTA atrasado e eventos de retenção |
+| Manychat | Typebot (hoje *fair source*, FSL), Chatwoot (MIT), Botpress | bons, mas são outro sistema, outro banco, outra conta |
+| Área de membros | CourseLit, Moodle, Frappe LMS | LMS completos, sem saber quem comprou o quê no seu checkout |
+| Checkout | Autonnel (Apache-2.0), Medusa, Hyperswitch | nenhum com Pix direto na chave do vendedor, sem gateway |
+| Remarketing | Mautic, listmonk | e-mail; sem WhatsApp e sem o estado do pedido |
+| Spy | Biblioteca de Anúncios da Meta (API oficial) | só busca; ninguém guarda o swipe file junto do funil |
+
+O ganho de juntar não é economia de ferramenta: é que **tudo é evento sobre a mesma pessoa**. O anúncio que trouxe o visitante, o quanto ele
+viu da VSL, o checkout que abandonou, a mensagem de recuperação e a compra moram no mesmo banco, e "qual campanha vendeu" vira uma consulta.
+
+## O que faz
+
+- **Tracker** (`/t.js`, uma linha no seu site): grava UTM, `fbclid`, `gclid`, `ttclid` no primeiro toque; eventos `visita`, `vsl_play`,
+  `vsl_25..100`, `cta_visto`, `cta_clique`, `checkout`, `compra`. **Meta Conversions API** server-side: `InitiateCheckout` e `Purchase`
+  com e-mail e telefone em sha256 e `fbc` montado do clique (não depende do pixel do navegador nem do bloqueador de anúncio).
+- **VSL** em `/v/<produto>`: vídeo, botão que aparece no segundo configurado, retenção medida por quartil.
+- **Checkout** em `/c/<produto>`: gera o **Pix copia e cola** (BR Code do Banco Central) com valor e identificador do pedido, direto na
+  sua chave. Sem gateway, sem taxa. Confirmação por webhook assinado (HMAC) do seu banco/gateway, ou um clique no painel.
+  Quer cartão? `link_pagamento` no produto manda para Stripe, Mercado Pago ou qualquer link de pagamento.
+- **Área de membros** em `/m/<token>`: liberada no pagamento, link enviado por e-mail e WhatsApp; módulos, aulas e progresso.
+- **Recuperação de checkout abandonado**: sequência em dados (ex.: WhatsApp em 15 min, e-mail em 4 h, WhatsApp em 24 h); para sozinha quando paga.
+- **Robô de mensagens (estilo Manychat)**: palavra-chave abre um fluxo, cada resposta avança um passo. WhatsApp pela Evolution API ou
+  pela Cloud API oficial; e-mail por SMTP.
+- **Remarketing**: público de quem abandonou (ou comprou) em sha256, pronto para Custom Audience.
+- **Spy**: busca na Biblioteca de Anúncios da Meta e swipe file salvo junto do funil.
+- **Painel** em `/painel?token=...`: funil por origem e campanha (visita → play → CTA → checkout → compra → receita), pedidos, mensagens.
+
+Produto novo, sequência de recuperação nova e fluxo novo do robô são **dado** em `config.json`, nenhuma linha de código.
+
+## Rodar
+
+    git clone https://github.com/thiagopatzdorf/funil-aberto && cd funil-aberto
+    ADMIN_TOKEN=troque-isto WEBHOOK_SECRET=troque-isto DATA_DIR=./data python3 app.py
+    # abra http://localhost:8080/v/metodo-demo
+
+Docker: `docker build -t funil-aberto . && docker run -p 8080:8080 -v funil:/data -e ADMIN_TOKEN=... -e WEBHOOK_SECRET=... funil-aberto`.
+Testes: `python3 -m pytest -q tests` (sobem o servidor de verdade e percorrem o funil inteiro).
+
+| Variável | Para quê | Sem ela |
+|---|---|---|
+| `ADMIN_TOKEN` | painel e API admin | painel fechado |
+| `WEBHOOK_SECRET` | assinatura HMAC-SHA256 (`X-Assinatura`) do webhook de pagamento e da entrada do robô | webhook recusado |
+| `META_PIXEL_ID`, `META_CAPI_TOKEN` (`META_TEST_EVENT_CODE`) | Conversions API | evento simulado |
+| `EVOLUTION_URL`, `EVOLUTION_KEY`, `EVOLUTION_INSTANCIA` ou `WA_CLOUD_TOKEN`, `WA_PHONE_ID` | WhatsApp | mensagem simulada |
+| `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASS`, `SMTP_FROM` | e-mail | mensagem simulada |
+| `META_AD_LIBRARY_TOKEN` | spy pela API | devolve o link da biblioteca pública |
+| `BASE_URL` | links nas mensagens | `http://localhost:8080` |
+
+Sem credencial nada sai da máquina e o painel mostra `simulado`: "simulado" nunca aparece como "enviado".
+
+### API
+
+- `POST /t` `{"vid","nome","produto",utm...}` → `{"vid"}`
+- `POST /api/webhook/pagamento` `{"pedido","status":"pago"}` com `X-Assinatura: hex(hmac_sha256(WEBHOOK_SECRET, corpo))`. Idempotente.
+- `POST /api/bot/entrada` `{"canal":"whatsapp","de":"55...","texto":"quero","enviar":true}` (mesma assinatura) → `{"respostas":[...]}`
+- Com `Authorization: Bearer $ADMIN_TOKEN`: `GET /api/admin/funil`, `GET /api/admin/publico?status=pendente`,
+  `POST /api/admin/pedido/<id>/pago`, `POST /api/admin/recuperacao`, `GET /api/admin/spy?q=...`, `GET|POST /api/admin/anuncios`.
+
+## Limites declarados
+
+- **Pix estático não avisa sozinho que foi pago.** O BR Code estático é um código de transferência; a confirmação vem do webhook do seu
+  banco (Efí, Inter, Mercado Pago e outros têm Pix com webhook) ou do clique no painel. Pix dinâmico (cobrança com vencimento) é a próxima fatia.
+- **QR Code** ainda não é desenhado (só o copia e cola, que é o que se usa no celular).
+- **A API da Biblioteca de Anúncios** só devolve anúncio comercial na UE e no Reino Unido; para o Brasil ela devolve o link da página pública e
+  você salva o que achar no swipe file.
+- **WhatsApp pela Cloud API oficial** só aceita texto livre até 24 h depois da última mensagem da pessoa; recuperação fora dessa janela precisa
+  de template aprovado (pela Evolution API não há essa trava, mas o número corre risco de bloqueio se mandar em massa).
+- Um processo e um SQLite: aguenta bem uma operação; várias réplicas exigem trocar o armazenamento (`nucleo.py` é o único arquivo com SQL).
+- LGPD: guarda nome, e-mail e telefone de quem compra. A Meta recebe só hash. Nenhum dado em log.
+
+Licença MIT.

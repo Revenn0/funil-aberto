@@ -1,0 +1,48 @@
+{
+  "marca": "Funil Aberto",
+  "produtos": [
+    {
+      "slug": "metodo-demo",
+      "nome": "Método Demo: do zero à primeira venda",
+      "preco": 97.0,
+      "promessa": "O passo a passo para montar sua operação de venda online sem pagar mensalidade de ferramenta.",
+      "vsl": {
+        "video": "https://download.blender.org/peach/bigbuckbunny_movies/BigBuckBunny_320x180.mp4",
+        "credito_video": "Big Buck Bunny, (c) Blender Foundation, CC BY 3.0",
+        "cta_segundos": 20,
+        "cta_texto": "Quero garantir minha vaga"
+      },
+      "pix": {"chave": "demo@exemplo.com", "nome": "Funil Aberto Demo", "cidade": "Florianopolis"},
+      "link_pagamento": "",
+      "modulos": [
+        {"titulo": "Módulo 1: a oferta", "aulas": [
+          {"id": "m1a1", "titulo": "Quem compra e por quê", "video": "", "texto": "Escreva a promessa em uma frase."},
+          {"id": "m1a2", "titulo": "Preço e garantia", "video": "", "texto": "Garantia de 7 dias é exigência do CDC para compra online."}
+        ]},
+        {"titulo": "Módulo 2: o tráfego", "aulas": [
+          {"id": "m2a1", "titulo": "UTM em todo link", "video": "", "texto": "Sem utm_source e utm_campaign o painel não sabe qual anúncio vendeu."}
+        ]}
+      ]
+    }
+  ],
+  "recuperacao": [
+    {"apos_minutos": 15, "canal": "whatsapp", "texto": "Oi {nome}! Vi que você começou a compra do {produto} e não finalizou. O Pix continua valendo: {link}"},
+    {"apos_minutos": 240, "canal": "email", "texto": "Seu acesso ao {produto} está reservado\n\nOi {nome}, seu pedido ainda está aberto. Finalize aqui: {link}"},
+    {"apos_minutos": 1440, "canal": "whatsapp", "texto": "{nome}, último aviso: o pedido do {produto} fecha hoje. {link}"}
+  ],
+  "fluxos": {
+    "quero": {
+      "palavras": ["quero", "eu quero", "link"],
+      "passos": [
+        "Que bom! Antes do link: qual é hoje o seu maior desafio para vender online?",
+        "Entendi. O Método Demo resolve exatamente isso. Aqui está o link: {base}/v/metodo-demo",
+        "Qualquer dúvida é só responder aqui."
+      ]
+    },
+    "suporte": {
+      "palavras": ["acesso", "senha", "login"],
+      "passos": ["Seu acesso chega no e-mail da compra. Não achou? Responda com o e-mail que usou."]
+    }
+  },
+  "resposta_padrao": "Oi! Responda QUERO para receber o link ou ACESSO para ajuda com a área de membros."
+}
