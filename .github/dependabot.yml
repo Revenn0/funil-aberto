@@ -1,0 +1,7 @@
+# Mantém as actions do CI atualizadas (continuam fixadas por SHA; o Dependabot troca o SHA e o comentário da versão).
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly

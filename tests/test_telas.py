@@ -78,3 +78,17 @@ def test_video_da_demo_e_do_proprio_servidor():
     assert cfg["produtos"][0]["vsl"]["video"] == "/static/demo/vsl-demo.mp4"
     # 24 s em 720p cabem em ~0,5 MB; um vídeo de 5 MB aqui já foi um render que saiu com 1 hora (zoom aplicado quadro a quadro).
     assert (STATIC / "demo" / "vsl-demo.mp4").stat().st_size < 2_000_000
+
+
+def test_pagina_aponta_estilo_e_script_pela_impressao_do_conteudo_para_cache_velho_nao_quebrar_a_tela(srv):
+    # Depois de uma publicação, o celular usava o estilo.css de antes (cache de 24 h) com o HTML novo.
+    import hashlib
+
+    import paginas
+    raiz = Path(paginas.__file__).resolve().parent / "static"
+    html = req(f"{srv}/c/metodo-demo")[2].decode()
+    for rel in ("estilo.css", "funil.js"):
+        v = hashlib.sha256((raiz / rel).read_bytes()).hexdigest()[:10]
+        assert f"/static/{rel}?v={v}" in html
+    st, _, corpo = req(f"{srv}{paginas.estatico('estilo.css')}")
+    assert st == 200 and corpo == (raiz / "estilo.css").read_bytes()

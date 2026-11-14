@@ -9,7 +9,10 @@ comportamento em static/funil.js: nenhum script inline (CSP `script-src 'self'`)
 """
 from __future__ import annotations
 
+import functools
+import hashlib
 import html
+from pathlib import Path
 
 e = html.escape
 
@@ -54,18 +57,28 @@ def brl(v: float | None) -> str:
 
 
 def pct(parte: float, todo: float) -> str:
-    return f"{(parte / todo * 100):.1f}%".replace(".", ",") if todo else "–"
+    return f"{(parte / todo * 100):.1f}%".replace(".", ",") if todo else "–"  # noqa: RUF001 (travessão de propósito)
+
+
+@functools.cache
+def estatico(rel: str) -> str:
+    """URL de static/ com a impressão do conteúdo: arquivo novo, URL nova.
+
+    Sem isso o celular (e a borda da Cloudflare) guardava o estilo.css velho por 24 h depois de uma publicação,
+    e a página nova saía com o estilo antigo: no Pix, o ícone sem tamanho ocupava a tela inteira (14/11)."""
+    dados = (Path(__file__).resolve().parent / "static" / rel).read_bytes()
+    return f"/static/{rel}?v={hashlib.sha256(dados).hexdigest()[:10]}"
 
 
 def documento(titulo: str, corpo: str, *, tema: str, produto: str = "", tracker: bool = True, extra_head: str = "") -> str:
     return (
         "<!doctype html><html lang=pt-BR><head><meta charset=utf-8>"
         "<meta name=viewport content='width=device-width,initial-scale=1,viewport-fit=cover'>"
-        f"<title>{e(titulo)}</title><link rel=stylesheet href=/static/estilo.css>"
+        f"<title>{e(titulo)}</title><link rel=stylesheet href={estatico('estilo.css')}>"
         "<link rel=preload href=/static/fontes/bricolage.woff2 as=font type=font/woff2 crossorigin>"
         f"{extra_head}</head><body class='t-{tema}' data-produto='{e(produto)}'>{corpo}"
         + ("<script src=/t.js></script>" if tracker else "")
-        + "<script src=/static/funil.js defer></script></body></html>"
+        + f"<script src={estatico('funil.js')} defer></script></body></html>"
     )
 
 
@@ -199,7 +212,7 @@ def pix_pagina(marca: str, p: dict, ped: dict, codigo: str, link_telegram: str, 
 <section class=cartao><div class=pilha style="gap:8px"><strong>Seu pedido</strong><ul class=suave style="margin:0;padding-left:18px">{itens}</ul>
 <p class="suave pequeno">Pedido <span class=mono>{e(ped['id'])}</span> · acesso enviado para {e(ped['email'])}</p></div></section>
 </div></main>{_rodape(marca)}"""
-    return documento("Pague com Pix", corpo, tema="checkout", produto=p["slug"], extra_head="<script src=/static/qrcode.js defer></script>")
+    return documento("Pague com Pix", corpo, tema="checkout", produto=p["slug"], extra_head=f"<script src={estatico('qrcode.js')} defer></script>")
 
 
 def _aulas(produtos: list[dict]) -> list[tuple[dict, dict, dict]]:

@@ -216,3 +216,21 @@ def test_painel_manda_trocar_o_numero_no_maus_e_nao_mostra_qr(srv, casa):
     _, h, _ = req(f"{srv}/entrar", f"token={ADMIN}".encode(), {"Content-Type": "application/x-www-form-urlencoded"})
     html = req(f"{srv}/painel/conexoes", cab={"Cookie": h["Set-Cookie"].split(";")[0]})[2].decode()
     assert "já conectou no maus" in html and "whatsapp/qr" not in html
+
+
+def test_url_de_integracao_com_file_nao_le_disco_do_servidor(monkeypatch):
+    # EVOLUTION_URL/COMPOSIO_URL vêm do ambiente; urlopen aceitaria file:// e devolveria um arquivo local.
+    import pytest
+
+    import conexoes as cx
+    with pytest.raises(ValueError):
+        cx._http("GET", "file:///etc/passwd")
+
+
+def test_composio_usuario_definido_reaproveita_as_contas_ja_conectadas_em_vez_de_criar_usuario_novo(monkeypatch):
+    import conexoes as cx
+    monkeypatch.setenv("COMPOSIO_USUARIO", "genesis_abc123")
+    assert cx.composio_usuario() == "genesis_abc123"
+    monkeypatch.delenv("COMPOSIO_USUARIO")
+    monkeypatch.setenv("BASE_URL", "https://loja.exemplo")
+    assert cx.composio_usuario().startswith("funil_") and "loja" not in cx.composio_usuario()

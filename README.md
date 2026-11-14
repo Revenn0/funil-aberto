@@ -1,12 +1,77 @@
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/banner-escuro.svg">
+    <img alt="funil-aberto: a operação de venda online inteira, num processo só" src="docs/banner-claro.svg" width="100%">
+  </picture>
+</p>
+
+<p align="center">
+  <a href="https://github.com/thiagopatzdorf/funil-aberto/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/thiagopatzdorf/funil-aberto/actions/workflows/ci.yml/badge.svg"></a>
+  <img alt="Licença MIT" src="https://img.shields.io/badge/licen%C3%A7a-MIT-16a34a?style=flat-square">
+  <img alt="Python 3.10+" src="https://img.shields.io/badge/python-3.10%2B-3776ab?style=flat-square&logo=python&logoColor=white">
+  <img alt="Zero dependências" src="https://img.shields.io/badge/depend%C3%AAncias-0-16a34a?style=flat-square">
+  <img alt="Pix sem gateway" src="https://img.shields.io/badge/Pix-sem%20gateway-32bcad?style=flat-square">
+  <a href="CONTRIBUTING.md"><img alt="PRs bem-vindos" src="https://img.shields.io/badge/PRs-bem--vindos-16a34a?style=flat-square"></a>
+</p>
+
+<p align="center">
+  <a href="https://funil.genesisinnovation.com.br/v/metodo-demo"><b>Ver a demo no ar</b></a> ·
+  <a href="https://funil.fabweb.io">Conceito</a> ·
+  <a href="#rodar-em-1-minuto">Rodar</a> ·
+  <a href="#o-que-faz">O que faz</a> ·
+  <a href="AGENTS.md">AGENTS.md</a> ·
+  <a href="CONTRIBUTING.md">Contribuir</a>
+</p>
+
 # funil-aberto
 
 <!-- resumo: A operação de venda online (digital/DR) num processo só e de código aberto (MIT): tracker com atribuição por UTM e Meta CAPI, página de VSL com CTA no segundo certo, checkout com Pix direto na chave do vendedor (sem gateway), área de membros, recuperação de checkout abandonado por WhatsApp e e-mail, robô de mensagens por palavra-chave e biblioteca de anúncios; Python stdlib + SQLite. -->
 
-Nasceu de uma pergunta no X (13/11/2026): *"é possível fazer um open source que substitua todos os softwares que alguém usa numa
-operação de digital/DR/venda online? Tracker, VSL, Manychat, área de membros, spy, checkout, remarketing. Vejo todo mundo criando a própria;
-não faria mais sentido todos criarem uma só?"*
+> *"É possível fazer um open source que substitua todos os softwares que alguém usa numa operação de digital/DR/venda online?
+> Tracker, VSL, Manychat, área de membros, spy, checkout, remarketing. Vejo todo mundo criando a própria; não faria mais sentido
+> todos criarem uma só?"* — pergunta no X, 13/11/2026
 
-Faz. Este repositório é essa uma só. Sem mensalidade, sem dependência, um `python3 app.py`.
+Faz. Este repositório é essa uma só: **sem mensalidade, sem gateway, sem dependência**. Um `python3 app.py` e a operação está de pé,
+do anúncio à aula.
+
+<table>
+  <tr>
+    <td width="68%"><img src="docs/telas/vsl.webp" alt="Página de VSL com faixa de urgência, título e vídeo"><br><sub><b>VSL</b>: o botão de compra aparece no segundo que você escolher, e a retenção é medida por quartil.</sub></td>
+    <td width="32%"><img src="docs/telas/checkout-celular.webp" alt="Checkout no celular com cronômetro, garantia e botão Comprar agora"><br><sub><b>Checkout</b> no celular, com cronômetro, garantia e order bump.</sub></td>
+  </tr>
+  <tr>
+    <td><img src="docs/telas/painel.webp" alt="Painel com receita, vendas, conversão, gráfico de 14 dias e vendas por origem"><br><sub><b>Painel</b>: receita, conversão e qual campanha vendeu, do clique no anúncio ao Pix pago.</sub></td>
+    <td><img src="docs/telas/pix-celular.webp" alt="Página do Pix com QR Code, passos e botão Copiar código Pix"><br><sub><b>Pix</b> direto na sua chave: QR, copia e cola, e a página muda sozinha quando o pagamento cai.</sub></td>
+  </tr>
+  <tr>
+    <td colspan="2"><img src="docs/telas/membros.webp" alt="Área de membros com capa, progresso e módulos"><br><sub><b>Área de membros</b>, liberada no pagamento: módulos, aulas e progresso. Fotos da demo do Unsplash (créditos em <code>static/demo/CREDITOS.md</code>).</sub></td>
+  </tr>
+</table>
+
+## Rodar em 1 minuto
+
+    git clone https://github.com/thiagopatzdorf/funil-aberto && cd funil-aberto
+    ADMIN_TOKEN=troque-isto WEBHOOK_SECRET=troque-isto python3 app.py
+    # VSL:    http://localhost:8080/v/metodo-demo
+    # Painel: http://localhost:8080/entrar  (entra com o ADMIN_TOKEN)
+
+Nada para instalar além do Python 3.10+. Sem credencial nenhuma mensagem sai da máquina: tudo fica marcado como `simulado` até você
+ligar os canais em `/painel/conexoes`.
+
+## Como uma venda passa por ele
+
+```mermaid
+flowchart LR
+  A[Anúncio<br>UTM · fbclid] --> B[VSL<br>/v/produto]
+  B -->|CTA no segundo certo| C[Checkout<br>/c/produto]
+  C -->|Pix na sua chave| D{Pagou?}
+  D -->|webhook assinado<br>ou clique no painel| E[Área de membros<br>/m/token]
+  D -->|não| F[Recuperação<br>WhatsApp · e-mail · Telegram]
+  F --> C
+  E --> G[Meta CAPI Purchase<br>+ integrações Composio]
+  C -.-> H[(SQLite<br>tudo é evento da mesma pessoa)]
+  E -.-> H
+```
 
 ## Já existia? Em pedaços, sim. Junto, não.
 
@@ -40,7 +105,7 @@ viu da VSL, o checkout que abandonou, a mensagem de recuperação e a compra mor
   pela Cloud API oficial; e-mail por SMTP.
 - **Remarketing**: público de quem abandonou (ou comprou) em sha256, pronto para Custom Audience.
 - **Spy**: busca na Biblioteca de Anúncios da Meta e swipe file salvo junto do funil.
-- **Painel** em `/painel?token=...`: funil por origem e campanha (visita → play → CTA → checkout → compra → receita), pedidos, mensagens.
+- **Painel** em `/painel` (login em `/entrar`): funil por origem e campanha (visita → play → CTA → checkout → compra → receita), pedidos, mensagens.
 
 Produto novo, sequência de recuperação nova e fluxo novo do robô são **dado** em `config.json`, nenhuma linha de código.
 
@@ -70,11 +135,7 @@ O painel abre por login (`/entrar`, com o `ADMIN_TOKEN`; o cookie guarda um deri
 A Genesis hospeda uma instância em https://funil.genesisinnovation.com.br (app + Evolution própria num compose, túnel de
 um hostname): `apps/factory/deploy/factory01/instalar-funil-aberto.sh` no repositório da Genesis.
 
-## Rodar
-
-    git clone https://github.com/thiagopatzdorf/funil-aberto && cd funil-aberto
-    ADMIN_TOKEN=troque-isto WEBHOOK_SECRET=troque-isto DATA_DIR=./data python3 app.py
-    # abra http://localhost:8080/v/metodo-demo
+## Configuração
 
 Docker: `docker build -t funil-aberto . && docker run -p 8080:8080 -v funil:/data -e ADMIN_TOKEN=... -e WEBHOOK_SECRET=... funil-aberto`.
 Testes: `python3 -m pytest -q tests` (sobem o servidor de verdade e percorrem o funil inteiro).
@@ -90,6 +151,13 @@ Testes: `python3 -m pytest -q tests` (sobem o servidor de verdade e percorrem o 
 | `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASS`, `SMTP_FROM` | e-mail | mensagem simulada |
 | `META_AD_LIBRARY_TOKEN` | spy pela API | devolve o link da biblioteca pública |
 | `BASE_URL` | links nas mensagens | `http://localhost:8080` |
+| `PORT`, `BIND` | porta e endereço em que o servidor escuta (`BIND=127.0.0.1` atrás de proxy na mesma máquina) | `8080`, `0.0.0.0` |
+| `DATA_DIR`, `FUNIL_CONFIG` | pasta do SQLite e caminho de outro `config.json` | `./data`, o `config.json` ao lado do app |
+| `EMAIL_VIA` | `composio` manda o e-mail de acesso pelo Gmail conectado na Composio | SMTP |
+| `COMPOSIO_USUARIO`, `COMPOSIO_URL` | dono das contas conectadas na Composio; outro endereço da API (testes) | derivado do `BASE_URL`; a API pública |
+| `CONEXOES_URL`, `CONEXOES_SERVICO_TOKEN`, `CONEXOES_USUARIO` | WhatsApp por um serviço de conexões que já tem o número ligado (o `maus-conexoes` da Genesis): o funil não abre outro QR | Evolution própria ou Cloud API |
+| `FUNIL_TETO_WHATSAPP_DIA` | teto de mensagens de WhatsApp em 24 h | `300` |
+| `TELEGRAM_API` | outro endereço da Bot API (testes) | `https://api.telegram.org` |
 
 Sem credencial nada sai da máquina e o painel mostra `simulado`: "simulado" nunca aparece como "enviado".
 
@@ -105,12 +173,16 @@ Sem credencial nada sai da máquina e o painel mostra `simulado`: "simulado" nun
 
 - **Pix estático não avisa sozinho que foi pago.** O BR Code estático é um código de transferência; a confirmação vem do webhook do seu
   banco (Efí, Inter, Mercado Pago e outros têm Pix com webhook) ou do clique no painel. Pix dinâmico (cobrança com vencimento) é a próxima fatia.
-- **QR Code** ainda não é desenhado (só o copia e cola, que é o que se usa no celular).
 - **A API da Biblioteca de Anúncios** só devolve anúncio comercial na UE e no Reino Unido; para o Brasil ela devolve o link da página pública e
   você salva o que achar no swipe file.
 - **WhatsApp pela Cloud API oficial** só aceita texto livre até 24 h depois da última mensagem da pessoa; recuperação fora dessa janela precisa
   de template aprovado (pela Evolution API não há essa trava, mas o número corre risco de bloqueio se mandar em massa).
 - Um processo e um SQLite: aguenta bem uma operação; várias réplicas exigem trocar o armazenamento (`nucleo.py` é o único arquivo com SQL).
 - LGPD: guarda nome, e-mail e telefone de quem compra. A Meta recebe só hash. Nenhum dado em log.
+
+## Contribuir
+
+PRs são bem-vindos. Comece pelo [`AGENTS.md`](AGENTS.md): mapa do código, regras que os testes cobram, como fazer as mudanças comuns e a
+lista do que ainda falta. O passo a passo curto está em [`CONTRIBUTING.md`](CONTRIBUTING.md).
 
 Licença MIT.

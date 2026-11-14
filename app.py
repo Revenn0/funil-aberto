@@ -377,8 +377,7 @@ def telegram_entrada(update: dict) -> None:
 
 
 def _visitante(vid: str) -> dict | None:
-    r = n.db().execute("select * from visitante where id=?", (vid,)).fetchone()
-    return dict(r) if r else None
+    return n.visitante_por_id(vid)
 
 
 def _contexto(ped: dict, p: dict) -> dict:
@@ -422,7 +421,8 @@ def main(argv: list[str]) -> None:
     porta = int(os.environ.get("PORT", "8080"))
     print(f"funil-aberto {VERSAO} em http://0.0.0.0:{porta}")
     # BIND=127.0.0.1 quando o contêiner usa a rede do host: sem isso a porta abriria em todas as interfaces da máquina.
-    ThreadingHTTPServer((os.environ.get("BIND", "0.0.0.0"), porta), H).serve_forever()
+    servidor = ThreadingHTTPServer((os.environ.get("BIND", "0.0.0.0"), porta), H)  # noqa: S104 (contêiner; BIND restringe)
+    servidor.serve_forever()
 
 
 if __name__ == "__main__":

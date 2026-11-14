@@ -20,9 +20,9 @@ GRAPH = "https://graph.facebook.com/v21.0"
 
 
 def _post_json(url: str, corpo: dict, cabecalhos: dict | None = None, tempo: int = 10) -> dict:
-    req = urllib.request.Request(url, data=json.dumps(corpo).encode(), method="POST",
+    req = urllib.request.Request(cx._so_http(url), data=json.dumps(corpo).encode(), method="POST",  # noqa: S310
                                  headers={"Content-Type": "application/json", **(cabecalhos or {})})
-    with urllib.request.urlopen(req, timeout=tempo) as r:
+    with urllib.request.urlopen(req, timeout=tempo) as r:  # noqa: S310 (esquema conferido em _so_http)
         return json.loads(r.read() or b"{}")
 
 
@@ -157,5 +157,5 @@ def buscar_anuncios(termo: str, pais: str = "BR", limite: int = 25) -> dict:
         "search_terms": termo, "ad_reached_countries": json.dumps([pais]), "ad_active_status": "ACTIVE",
         "fields": "page_name,ad_creative_bodies,ad_snapshot_url,ad_delivery_start_time", "limit": limite,
         "access_token": token})
-    with urllib.request.urlopen(f"{GRAPH}/ads_archive?{q}", timeout=15) as r:
+    with urllib.request.urlopen(f"{GRAPH}/ads_archive?{q}", timeout=15) as r:  # noqa: S310 (GRAPH é constante https)
         return {"status": "ok", "anuncios": json.loads(r.read()).get("data", [])}

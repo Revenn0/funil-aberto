@@ -127,7 +127,8 @@ def funil(produto_slug: str | None = None) -> list[dict]:
     """Funil por origem: visitantes únicos em cada etapa, agrupados por utm_source/utm_campaign."""
     etapas = ["visita", "vsl_play", "cta_visto", "checkout", "compra"]
     filtro, args = ("and e.produto=?", [produto_slug]) if produto_slug else ("", [])
-    sql = ("select coalesce(nullif(v.utm_source,''),'(direto)') src, coalesce(nullif(v.utm_campaign,''),'-') camp, "
+    # O que entra por f-string são os nomes fixos de `etapas`; o filtro do usuário vai por parâmetro (?).
+    sql = ("select coalesce(nullif(v.utm_source,''),'(direto)') src, coalesce(nullif(v.utm_campaign,''),'-') camp, "  # noqa: S608
            + ", ".join(f"count(distinct case when e.nome='{e}' then e.visitante end) {e}" for e in etapas)
            + ", sum(case when e.nome='compra' then e.valor else 0 end) receita"
            f" from evento e join visitante v on v.id=e.visitante where 1=1 {filtro}"
@@ -242,6 +243,16 @@ def _garantir_membro(email: str, nome: str) -> dict:
     con.execute("insert into membro(id, email, nome, token, criado) values(?,?,?,?,?)",
                 (novo_id("m"), email, nome, secrets.token_urlsafe(24), time.time()))
     return membro_por_email(email)
+
+
+def visitante_por_id(vid: str) -> dict | None:
+    r = db().execute("select * from visitante where id=?", (vid,)).fetchone()
+    return dict(r) if r else None
+
+
+def mensagens_enviadas_desde(canal: str, desde: float) -> int:
+    return db().execute("select count(*) from mensagem where canal=? and status='enviado' and criado>?",
+                        (canal, desde)).fetchone()[0]
 
 
 def membro_por_email(email: str) -> dict | None:

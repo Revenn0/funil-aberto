@@ -30,12 +30,19 @@ class ErroConexao(Exception):
     pass
 
 
+def _so_http(url: str) -> str:
+    # As URLs vêm de variável de ambiente; urlopen aceitaria file:// e leria disco do servidor.
+    if urllib.parse.urlsplit(url).scheme not in {"http", "https"}:
+        raise ValueError("URL de integração precisa ser http ou https")
+    return url
+
+
 def _http(metodo: str, url: str, corpo: dict | None = None, cabecalhos: dict | None = None, tempo: int = 20) -> dict:
     dados = json.dumps(corpo).encode() if corpo is not None else None
-    req = urllib.request.Request(url, data=dados, method=metodo,
+    req = urllib.request.Request(_so_http(url), data=dados, method=metodo,  # noqa: S310
                                  headers={"Content-Type": "application/json", **(cabecalhos or {})})
     try:
-        with urllib.request.urlopen(req, timeout=tempo) as r:
+        with urllib.request.urlopen(req, timeout=tempo) as r:  # noqa: S310 (esquema conferido em _so_http)
             bruto = r.read()
     except urllib.error.HTTPError as e:
         # O corpo de erro pode ecoar a requisição; só o código sobe, para nada sensível ir a log ou tela.
@@ -116,9 +123,7 @@ def whatsapp_desconectar() -> None:
 
 
 def _enviados_hoje() -> int:
-    inicio = time.time() - 86400
-    return n.db().execute("select count(*) from mensagem where canal='whatsapp' and status='enviado' and criado>?",
-                          (inicio,)).fetchone()[0]
+    return n.mensagens_enviadas_desde("whatsapp", time.time() - 86400)
 
 
 def whatsapp_enviar(para: str, texto: str) -> str:
@@ -201,8 +206,13 @@ def _cp(metodo: str, caminho: str, corpo: dict | None = None) -> dict:
 
 
 def composio_usuario() -> str:
-    """user_id estável da operação na Composio: sem e-mail nem nome (mesma ideia do genesis-composio-usuario.ts)."""
-    base = os.environ.get("COMPOSIO_USUARIO") or os.environ.get("BASE_URL", "funil-aberto")
+    """user_id da operação na Composio, sem e-mail nem nome.
+
+    COMPOSIO_USUARIO vai como está: é o id de quem já conectou Gmail, Planilhas etc. em outro sistema, e o funil
+    reaproveita essas contas. Antes ele passava pelo hash e virava um usuário novo, sem nenhuma conta ligada."""
+    if os.environ.get("COMPOSIO_USUARIO"):
+        return os.environ["COMPOSIO_USUARIO"]
+    base = os.environ.get("BASE_URL", "funil-aberto")
     return "funil_" + hashlib.sha256(f"funil-aberto:{base}".encode()).hexdigest()[:24]
 
 
