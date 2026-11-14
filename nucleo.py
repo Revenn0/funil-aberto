@@ -127,6 +127,19 @@ def funil(produto_slug: str | None = None) -> list[dict]:
     return [dict(r) for r in db().execute(sql, args)]
 
 
+def resumo() -> dict:
+    """Os números do topo do painel: visitantes únicos, pedidos, vendas pagas e receita."""
+    con = db()
+    visitantes = con.execute("select count(distinct visitante) from evento where nome='visita'").fetchone()[0]
+    checkouts, vendas, receita = con.execute(
+        "select count(*), coalesce(sum(status='pago'),0), coalesce(sum(case when status='pago' then valor end),0) from pedido").fetchone()
+    return {"visitantes": visitantes, "checkouts": checkouts, "vendas": vendas, "receita": receita}
+
+
+def pedidos_recentes(limite: int = 30) -> list[dict]:
+    return [dict(r) for r in db().execute("select * from pedido order by criado desc limit ?", (limite,))]
+
+
 # ---------- checkout ----------
 
 def criar_pedido(slug: str, vid: str, nome: str, email: str, telefone: str, metodo: str) -> dict:

@@ -16,7 +16,6 @@ from __future__ import annotations
 
 import hashlib
 import hmac
-import html
 import json
 import os
 import sys
@@ -29,12 +28,12 @@ from pathlib import Path
 import conexoes as cx
 import integracoes as ig
 import nucleo as n
+import paginas as pg
 import pix
 
 VERSAO = "0.1.0"
 AQUI = Path(__file__).resolve().parent
 LIMITE_CORPO = 64 * 1024
-e = html.escape
 
 
 def base_url() -> str:
@@ -80,15 +79,6 @@ def assinatura_ok(corpo: bytes, assinatura: str) -> bool:
 
 # ---------------- páginas ----------------
 
-CSS = """*{box-sizing:border-box}body{margin:0;font:16px/1.5 system-ui,sans-serif;background:#0b0d10;color:#e8eaed}
-main{max-width:760px;margin:0 auto;padding:24px 16px}a{color:#7cc4ff}h1{line-height:1.2}
-.bt{display:block;width:100%;padding:16px;border:0;border-radius:10px;background:#22c55e;color:#04120a;
-font-weight:700;font-size:18px;text-align:center;text-decoration:none;cursor:pointer}
-input{width:100%;padding:12px;margin:6px 0 12px;border-radius:8px;border:1px solid #333;background:#15181d;color:#fff}
-video{width:100%;border-radius:12px;background:#000}.cx{background:#15181d;border-radius:12px;padding:16px;margin:16px 0}
-code,textarea{word-break:break-all}table{display:block;overflow-x:auto;width:100%;border-collapse:collapse;font-size:14px}td,th{padding:6px;border-bottom:1px solid #222;text-align:left}
-.p{color:#9aa0a6;font-size:13px}.ok{color:#22c55e}"""
-
 TRACKER_JS = """(function(){var k='fa_vid',m=document.cookie.match(/fa_vid=([^;]+)/),v=m?m[1]:null;
 var q=new URLSearchParams(location.search),d={referrer:document.referrer,landing:location.pathname};
 ['utm_source','utm_medium','utm_campaign','utm_content','utm_term','fbclid','gclid','ttclid'].forEach(function(c){if(q.get(c))d[c]=q.get(c)});
@@ -98,98 +88,35 @@ return fetch('/t',{method:'POST',headers:{'Content-Type':'application/json'},bod
 window.fa('visita');})();"""
 
 
-def pagina(titulo: str, corpo: str, produto: str = "") -> str:
-    return (f"<!doctype html><html lang=pt-BR><head><meta charset=utf-8><meta name=viewport content='width=device-width,initial-scale=1'>"
-            f"<title>{e(titulo)}</title><style>{CSS}</style></head><body data-produto='{e(produto)}'><main>{corpo}</main>"
-            f"<script src=/t.js></script></body></html>")
+def marca() -> str:
+    return n.config().get("marca", "Funil Aberto")
 
 
 def pg_inicio() -> str:
-    itens = "".join(f"<li><a href='/v/{e(p['slug'])}'>{e(p['nome'])}</a> (R$ {p['preco']:.2f})</li>" for p in n.config()["produtos"])
-    return pagina("Funil Aberto", f"""<h1>Funil Aberto</h1><p>Tracker, VSL, checkout com Pix, área de membros,
-recuperação de carrinho, robô de WhatsApp e biblioteca de anúncios. Um processo, código aberto (MIT).</p>
-<div class=cx><b>Produtos</b><ul>{itens}</ul></div><p class=p>Painel do operador em <a href="/painel">/painel</a>.
-Código: <a href='https://github.com/thiagopatzdorf/funil-aberto'>github.com/thiagopatzdorf/funil-aberto</a>.</p>""")
+    return pg.inicio(marca(), n.config()["produtos"])
 
 
 def pg_vsl(p: dict) -> str:
-    v = p.get("vsl", {})
-    seg = int(v.get("cta_segundos", 0))
-    return pagina(p["nome"], f"""<h1>{e(p['nome'])}</h1><p>{e(p.get('promessa',''))}</p>
-<video id=vsl src="{e(v.get('video',''))}" controls playsinline preload=metadata></video>
-<p class=p>{e(v.get('credito_video',''))}</p>
-<div id=cta hidden><a class=bt href="/c/{e(p['slug'])}" onclick="fa('cta_clique')">{e(v.get('cta_texto','Comprar agora'))}</a></div>
-<script>(function(){{var vi=document.getElementById('vsl'),c=document.getElementById('cta'),f={{}},seg={seg};
-function mostra(){{if(c.hidden){{c.hidden=false;fa('cta_visto')}}}}if(seg<=0)setTimeout(mostra,0);
-vi.addEventListener('play',function(){{if(!f.p){{f.p=1;fa('vsl_play')}}}});
-vi.addEventListener('timeupdate',function(){{var t=vi.currentTime,d=vi.duration||1;if(t>=seg)mostra();
-[25,50,75,100].forEach(function(x){{if(!f[x]&&t/d*100>=x-0.5){{f[x]=1;fa('vsl_'+x)}}}})}});}})();</script>""", p["slug"])
+    return pg.vsl(marca(), p)
 
 
 def pg_checkout(p: dict, erro: str = "") -> str:
-    aviso = f"<p style='color:#f87171'>{e(erro)}</p>" if erro else ""
-    return pagina(f"Checkout · {p['nome']}", f"""<h1>{e(p['nome'])}</h1><div class=cx><b>R$ {p['preco']:.2f}</b>
-<span class=p>· acesso imediato depois do pagamento · garantia de 7 dias</span></div>{aviso}
-<form method=post action="/c/{e(p['slug'])}"><input type=hidden name=vid id=vid>
-<label>Nome<input name=nome required maxlength=120 autocomplete=name></label>
-<label>E-mail (o acesso chega aqui)<input name=email type=email required maxlength=200 autocomplete=email></label>
-<label>WhatsApp<input name=telefone inputmode=tel maxlength=20 autocomplete=tel></label>
-<button class=bt>Pagar com Pix</button></form>
-<script>var m=document.cookie.match(/fa_vid=([^;]+)/);if(m)document.getElementById('vid').value=m[1];</script>""", p["slug"])
+    return pg.checkout(marca(), p, erro)
 
 
 def pg_pix(p: dict, ped: dict) -> str:
     cfg = p.get("pix", {})
     codigo = pix.copia_e_cola(cfg["chave"], cfg["nome"], cfg["cidade"], ped["valor"], txid=ped["id"].replace("_", "")[:25])
-    pago = ped["status"] == "pago"
-    return pagina("Pague com Pix", f"""<h1>{'Pagamento confirmado' if pago else 'Falta só o Pix'}</h1>
-<div class=cx><p>Valor: <b>R$ {ped['valor']:.2f}</b>. Copie o código abaixo e cole no app do seu banco (Pix copia e cola).</p>
-<textarea id=px rows=4 style='width:100%' readonly>{e(codigo)}</textarea>
-<button class=bt onclick="navigator.clipboard.writeText(document.getElementById('px').value);this.textContent='Copiado!'">Copiar código Pix</button></div>
-<p class=p>Pedido <code>{e(ped['id'])}</code>. Assim que o pagamento for confirmado o acesso chega em {e(ped['email'])}.</p>
-{f"<p><a class=bt href='{e(cx.telegram_link(ped['id']))}'>Receber o acesso pelo Telegram</a></p>" if cx.telegram_link(ped['id']) else ""}
-<p id=st class=ok>{'Acesso liberado: confira seu e-mail.' if pago else ''}</p>
-<script>setInterval(function(){{fetch('/api/pedido/{e(ped['id'])}').then(r=>r.json()).then(j=>{{if(j.status==='pago')
-document.getElementById('st').textContent='Pagamento confirmado! O acesso chegou no seu e-mail.'}})}},5000)</script>""", p["slug"])
+    return pg.pix_pagina(marca(), p, ped, codigo, cx.telegram_link(ped["id"]))
 
 
 def pg_membros(m: dict) -> str:
-    feitas = n.aulas_feitas(m["id"])
-    blocos = []
-    for slug in n.produtos_do_membro(m["id"]):
-        p = n.produto(slug)
-        if not p:
-            continue
-        mods = ""
-        for mod in p.get("modulos", []):
-            aulas = "".join(
-                f"<li>{'✔ ' if a['id'] in feitas else ''}<b>{e(a['titulo'])}</b><br><span class=p>{e(a.get('texto',''))}</span>"
-                + (f"<video src='{e(a['video'])}' controls></video>" if a.get("video") else "")
-                + ("" if a["id"] in feitas else
-                   f"<form method=post action='/m/{e(m['token'])}/feito'><input type=hidden name=aula value='{e(a['id'])}'>"
-                   "<button>Marcar como vista</button></form>") + "</li>"
-                for a in mod["aulas"])
-            mods += f"<h3>{e(mod['titulo'])}</h3><ul>{aulas}</ul>"
-        blocos.append(f"<div class=cx><h2>{e(p['nome'])}</h2>{mods}</div>")
-    return pagina("Área de membros", f"<h1>Olá, {e(m['nome'] or m['email'])}</h1>" + ("".join(blocos) or "<p>Nenhum produto ainda.</p>"))
+    produtos = [p for p in (n.produto(s) for s in n.produtos_do_membro(m["id"])) if p]
+    return pg.membros(marca(), m, produtos, n.aulas_feitas(m["id"]), m["token"])
 
 
 def pg_painel() -> str:
-    linhas = "".join(
-        f"<tr><td>{e(r['src'])}</td><td>{e(r['camp'])}</td><td>{r['visita']}</td><td>{r['vsl_play']}</td>"
-        f"<td>{r['cta_visto']}</td><td>{r['checkout']}</td><td>{r['compra']}</td><td>R$ {r['receita'] or 0:.2f}</td></tr>"
-        for r in n.funil())
-    msgs = "".join(f"<tr><td>{e(m['canal'])}</td><td>{e(m['motivo'])}</td><td>{e(m['status'])}</td><td>{e(m['pedido'] or '')}</td></tr>"
-                   for m in n.mensagens(20))
-    peds = "".join(
-        f"<tr><td><code>{e(r['id'])}</code></td><td>{e(r['produto'])}</td><td>{e(r['status'])}</td><td>R$ {r['valor']:.2f}</td><td>"
-        + (f"<form method=post action='/painel/pedido/{e(r['id'])}/pago'><button>Pix recebido</button></form>" if r['status'] == 'pendente' else "")
-        + "</td></tr>" for r in n.db().execute("select * from pedido order by criado desc limit 30"))
-    return pagina("Painel", f"""<h1>Painel</h1><p><a href="/painel/conexoes">Conexões (WhatsApp, Telegram, integrações)</a>
-· <a href="/sair">Sair</a></p><h2>Funil por origem (visitantes únicos)</h2><table><tr><th>origem</th><th>campanha</th>
-<th>visita</th><th>play</th><th>CTA</th><th>checkout</th><th>compra</th><th>receita</th></tr>{linhas}</table>
-<h2>Pedidos</h2><table>{peds}</table><p class=p>“Pix recebido” libera o acesso e conta a venda (o mesmo que o webhook do banco).</p>
-<h2>Mensagens (recuperação e robô)</h2><table>{msgs}</table>""")
+    return pg.painel(n.resumo(), n.funil(), n.pedidos_recentes(), n.mensagens(20))
 
 
 TOOLKITS = ("gmail", "googlesheets", "hubspot", "notion", "slack", "googlecalendar", "airtable", "trello")
@@ -204,47 +131,20 @@ def _estado_seguro(f) -> dict:
 
 def pg_conexoes(aviso: str = "") -> str:
     wa, tg = _estado_seguro(cx.whatsapp_estado), _estado_seguro(cx.telegram_estado)
-    nomes = {"open": "conectado", "connecting": "aguardando leitura do QR", "close": "desconectado",
-             "ausente": "ainda não criado", "simulado": "sem servidor configurado", "erro": "erro"}
-    wa_acao = ("<form method=post action='/painel/conexoes/whatsapp/desconectar'><button>Desconectar</button></form>"
-               if wa["estado"] == "open" else
-               "<form method=post action='/painel/conexoes/whatsapp/qr'><button class=bt>Conectar pelo QR</button></form>"
-               if wa.get("configurado") else "<p class=p>Defina EVOLUTION_URL e EVOLUTION_KEY no servidor.</p>")
-    tg_acao = (f"<p>Bot <b>@{e(tg.get('bot', ''))}</b>.</p><form method=post action='/painel/conexoes/telegram/webhook'>"
-               "<button>Ligar o robô no bot</button></form>" if tg["estado"] == "open" else
-               "<p class=p>Crie um bot no @BotFather e defina TELEGRAM_BOT_TOKEN e TELEGRAM_BOT_USUARIO.</p>")
     try:
         contas = cx.composio_contas()
     except cx.ErroConexao as ex:
         contas, aviso = [], aviso or str(ex)
-    ligados = {c["toolkit"] for c in contas}
-    cp = ("".join(f"<li>{e(t)} {'<b class=ok>conectado</b>' if t in ligados else ''}"
-                  f"<form method=post action='/painel/conexoes/composio'><input type=hidden name=toolkit value='{t}'>"
-                  f"<button>{'Reconectar' if t in ligados else 'Conectar'}</button></form></li>" for t in TOOLKITS)
-          if os.environ.get("COMPOSIO_API_KEY") else "<p class=p>Defina COMPOSIO_API_KEY no servidor.</p>")
-    return pagina("Conexões", f"""<h1>Conexões</h1><p><a href="/painel">← Painel</a></p>
-{f"<p style='color:#f87171'>{e(aviso)}</p>" if aviso else ""}
-<div class=cx><h2>WhatsApp</h2><p>Estado: <b>{e(nomes.get(wa['estado'], wa['estado']))}</b>
-{f"<br><span class=p>{e(wa.get('erro', ''))}</span>" if wa.get('erro') else ""}</p>{wa_acao}
-<p class=p>Recuperação de carrinho, acesso e robô saem deste número. Teto de {cx.TETO_DIA} mensagens por dia contra banimento.</p></div>
-<div class=cx><h2>Telegram</h2><p>Estado: <b>{e(nomes.get(tg['estado'], 'conectado' if tg['estado'] == 'open' else tg['estado']))}</b></p>{tg_acao}
-<p class=p>O comprador abre o bot pelo link da página do Pix e passa a receber os avisos por lá.</p></div>
-<div class=cx><h2>Integrações (Composio)</h2><ul>{cp}</ul>
-<p class=p>Conecte o app e diga no config.json o que fazer em cada evento (ex.: compra → linha na planilha).</p></div>""")
+    return pg.conexoes(wa, tg, bool(os.environ.get("COMPOSIO_API_KEY")), TOOLKITS, {c["toolkit"] for c in contas},
+                       cx.TETO_DIA, aviso)
 
 
-def pg_qr(qr: dict) -> str:
-    img = f"<img src='{e(qr['qr'])}' alt='QR do WhatsApp' width=300 height=300>" if qr.get("qr") else ""
-    cod = f"<p>Ou, em Aparelhos conectados → Conectar com número de telefone, digite <b>{e(qr['codigo'])}</b>.</p>" if qr.get("codigo") else ""
-    return pagina("Conectar WhatsApp", f"""<h1>Leia o QR no WhatsApp</h1>
-<p>WhatsApp → Configurações → Aparelhos conectados → Conectar um aparelho.</p><div class=cx>{img}{cod}</div>
-<p><a href="/painel/conexoes">Já li o QR: voltar</a></p>""").replace("<head>", "<head><meta http-equiv=refresh content='25;url=/painel/conexoes'>", 1)
+pg_qr, pg_entrar = pg.qr_whatsapp, pg.entrar
 
-
-def pg_entrar(erro: str = "") -> str:
-    return pagina("Entrar", f"""<h1>Painel do funil</h1>{f"<p style='color:#f87171'>{e(erro)}</p>" if erro else ""}
-<form method=post action="/entrar"><label>Token de administrador<input name=token type=password required autocomplete=current-password></label>
-<button class=bt>Entrar</button></form>""")
+# Arquivos servidos de static/: lista fechada de tipos, nunca caminho com "..".
+ESTATICOS = {".css": "text/css; charset=utf-8", ".js": "application/javascript; charset=utf-8", ".woff2": "font/woff2"}
+CSP = ("default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; media-src 'self' https:; "
+       "font-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self' https:")
 
 
 # ---------------- servidor ----------------
@@ -262,6 +162,8 @@ class H(BaseHTTPRequestHandler):
         self.send_header("Content-Length", str(len(dados)))
         self.send_header("X-Content-Type-Options", "nosniff")
         self.send_header("Referrer-Policy", "strict-origin-when-cross-origin")
+        if tipo.startswith("text/html"):
+            self.send_header("Content-Security-Policy", CSP)
         for k, v in (extra or {}).items():
             self.send_header(k, v)
         self.end_headers()
@@ -291,6 +193,11 @@ class H(BaseHTTPRequestHandler):
                 return self._resp(200, pg_inicio())
             if caminho == "/t.js":
                 return self._resp(200, TRACKER_JS, "application/javascript; charset=utf-8")
+            if partes[0] == "static" and len(partes) in (2, 3) and ".." not in caminho:
+                arq = AQUI.joinpath(*partes)
+                tipo = ESTATICOS.get(arq.suffix)
+                if tipo and arq.is_file():
+                    return self._resp(200, arq.read_bytes(), tipo, {"Cache-Control": "public, max-age=86400"})
             if caminho == "/saude":
                 return self._json(200, {"ok": True, "versao": VERSAO})
             if partes[0] == "v" and len(partes) == 2 and (p := n.produto(partes[1])):
@@ -327,7 +234,7 @@ class H(BaseHTTPRequestHandler):
                     return self._json(200, ig.buscar_anuncios(q.get("q", ""), q.get("pais", "BR")))
                 if partes[2:] == ["anuncios"]:
                     return self._json(200, n.anuncios(q.get("q", "")))
-            return self._resp(404, pagina("Não encontrado", "<h1>Página não encontrada</h1>"))
+            return self._resp(404, pg.nao_encontrado())
         except Exception as ex:  # noqa: BLE001
             return self._json(500, {"erro": type(ex).__name__})
 
@@ -419,7 +326,7 @@ class H(BaseHTTPRequestHandler):
             elif caminho == "/painel/conexoes/composio":
                 return self._resp(303, "", extra={"Location": cx.composio_link(f.get("toolkit", ""))})
             else:
-                return self._resp(404, pagina("Não encontrado", "<h1>Página não encontrada</h1>"))
+                return self._resp(404, pg.nao_encontrado())
         except cx.ErroConexao as ex:
             return self._resp(502, pg_conexoes(str(ex)))
         return self._resp(303, "", extra={"Location": "/painel/conexoes"})
