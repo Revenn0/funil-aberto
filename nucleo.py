@@ -65,8 +65,16 @@ def db() -> sqlite3.Connection:
         con.row_factory = sqlite3.Row
         con.execute("pragma journal_mode=wal")
         con.executescript(SCHEMA)
+        _migrar(con)
         _LOCAL.con, _LOCAL.caminho = con, caminho
     return con
+
+
+def _migrar(con: sqlite3.Connection) -> None:
+    """Colunas novas em banco que já existe: `create table if not exists` não altera tabela antiga em produção."""
+    colunas = {r[1] for r in con.execute("pragma table_info(pedido)")}
+    if "itens" not in colunas:
+        con.execute("alter table pedido add column itens text default ''")
 
 
 def novo_id(prefixo: str) -> str:
@@ -136,26 +144,59 @@ def resumo() -> dict:
     return {"visitantes": visitantes, "checkouts": checkouts, "vendas": vendas, "receita": receita}
 
 
+def vendas_por_dia(dias: int = 14) -> list[tuple[str, float]]:
+    """Receita paga por dia (data local do servidor), com os dias sem venda em zero: o gráfico não pula dia."""
+    import datetime as dt
+    hoje = dt.date(*time.localtime()[:3])  # mesma data local que o SQLite usa abaixo
+    base = {(hoje - dt.timedelta(days=i)).isoformat(): 0.0 for i in range(dias - 1, -1, -1)}
+    for d, v in db().execute("select date(pago_em,'unixepoch','localtime'), sum(valor) from pedido where status='pago'"
+                             " and pago_em >= ? group by 1", (time.time() - dias * 86400,)):
+        if d in base:
+            base[d] = v
+    return list(base.items())
+
+
 def pedidos_recentes(limite: int = 30) -> list[dict]:
     return [dict(r) for r in db().execute("select * from pedido order by criado desc limit ?", (limite,))]
 
 
 # ---------- checkout ----------
 
-def criar_pedido(slug: str, vid: str, nome: str, email: str, telefone: str, metodo: str) -> dict:
+def order_bump(p: dict) -> dict | None:
+    """O produto oferecido junto no checkout ("adicione também"), se o config.json declarar um que existe."""
+    slug = (p.get("order_bump") or {}).get("produto")
+    extra = produto(slug) if slug and slug != p["slug"] else None
+    return {**extra, **{k: v for k, v in p["order_bump"].items() if k != "produto"}} if extra else None
+
+
+def criar_pedido(slug: str, vid: str, nome: str, email: str, telefone: str, metodo: str, com_bump: bool = False) -> dict:
     p = produto(slug)
     if not p:
         raise KeyError("produto não existe")
     email = email.strip().lower()
     if "@" not in email or len(email) > 200:
         raise ValueError("e-mail inválido")
+    # O preço vem sempre do config, nunca do formulário: o comprador não escolhe quanto paga.
+    itens, valor = [slug], float(p["preco"])
+    bump = order_bump(p) if com_bump else None
+    if bump:
+        itens.append(bump["slug"])
+        valor = round(valor + float(bump.get("preco_bump", bump["preco"])), 2)
     pid = novo_id("ped")
-    db().execute("insert into pedido(id, produto, visitante, nome, email, telefone, valor, status, metodo, criado)"
-                 " values(?,?,?,?,?,?,?,?,?,?)",
-                 (pid, slug, vid, nome.strip()[:120], email, so_digitos(telefone)[:20], float(p["preco"]),
-                  "pendente", metodo, time.time()))
-    evento(vid, "checkout", slug, float(p["preco"]))
+    db().execute("insert into pedido(id, produto, visitante, nome, email, telefone, valor, status, metodo, criado, itens)"
+                 " values(?,?,?,?,?,?,?,?,?,?,?)",
+                 (pid, slug, vid, nome.strip()[:120], email, so_digitos(telefone)[:20], valor,
+                  "pendente", metodo, time.time(), json.dumps(itens)))
+    evento(vid, "checkout", slug, valor)
     return pedido(pid)
+
+
+def itens_do_pedido(ped: dict) -> list[str]:
+    try:
+        itens = json.loads(ped.get("itens") or "[]")
+    except ValueError:
+        itens = []
+    return itens or [ped["produto"]]
 
 
 def pedido(pid: str) -> dict | None:
@@ -176,7 +217,8 @@ def marcar_pago(pid: str) -> dict:
             return {"pedido": ped, "novo": False, "membro": membro_por_email(ped["email"])}
         con.execute("update pedido set status='pago', pago_em=? where id=?", (time.time(), pid))
         mem = _garantir_membro(ped["email"], ped["nome"])
-        con.execute("insert or ignore into acesso(membro, produto) values(?,?)", (mem["id"], ped["produto"]))
+        for item in itens_do_pedido(ped):  # o order bump libera junto
+            con.execute("insert or ignore into acesso(membro, produto) values(?,?)", (mem["id"], item))
         con.execute("insert into evento(visitante, nome, produto, valor, dados, criado) values(?,?,?,?,?,?)",
                     (ped["visitante"], "compra", ped["produto"], ped["valor"], json.dumps({"pedido": pid}), time.time()))
         con.execute("commit")

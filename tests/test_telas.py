@@ -56,3 +56,25 @@ def test_todo_arquivo_de_terceiro_tem_licenca_declarada():
 
 def test_imagem_do_conteiner_leva_a_pasta_static():
     assert "COPY static ./static" in (STATIC.parent / "Dockerfile").read_text()
+
+
+def test_toda_foto_de_demonstracao_tem_credito():
+    creditos = (STATIC / "demo" / "CREDITOS.md").read_text()
+    fotos = sorted(p.name for p in (STATIC / "demo").glob("*.webp"))
+    assert fotos and all(f in creditos for f in fotos), [f for f in fotos if f not in creditos]
+
+
+def test_video_responde_por_pedaco_como_o_safari_do_iphone_exige(srv):
+    st, h, corpo = req(f"{srv}/static/demo/vsl-demo.mp4", cab={"Range": "bytes=0-99"})
+    assert st == 206 and len(corpo) == 100 and h["Content-Type"] == "video/mp4"
+    assert h["Content-Range"].startswith("bytes 0-99/") and h["Accept-Ranges"] == "bytes"
+    total = int(h["Content-Range"].split("/")[1])
+    assert req(f"{srv}/static/demo/vsl-demo.mp4", cab={"Range": f"bytes={total}-"})[0] == 416
+
+
+def test_video_da_demo_e_do_proprio_servidor():
+    import json
+    cfg = json.loads((STATIC.parent / "config.json").read_text())
+    assert cfg["produtos"][0]["vsl"]["video"] == "/static/demo/vsl-demo.mp4"
+    # 24 s em 720p cabem em ~0,5 MB; um vídeo de 5 MB aqui já foi um render que saiu com 1 hora (zoom aplicado quadro a quadro).
+    assert (STATIC / "demo" / "vsl-demo.mp4").stat().st_size < 2_000_000

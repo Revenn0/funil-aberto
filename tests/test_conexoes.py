@@ -182,3 +182,37 @@ def test_integracao_sem_chave_fica_simulada(srv, comp, monkeypatch):
     assert cx.disparar("compra", {"pedido": "x"}) == [{"ferramenta": "GOOGLESHEETS_SPREADSHEETS_VALUES_APPEND", "status": "simulado"}]
     assert comp.pedidos == []
 
+
+
+@pytest.fixture()
+def casa(falso, monkeypatch):
+    monkeypatch.setenv("CONEXOES_URL", falso.url)
+    monkeypatch.setenv("CONEXOES_SERVICO_TOKEN", "tok-servico")
+    monkeypatch.setenv("CONEXOES_USUARIO", "thiago")
+    falso.respostas[("POST", "/_interno/enviar")] = (200, {"ok": True, "enviados": 1})
+    return falso
+
+
+def test_whatsapp_do_maus_manda_pelo_dono_com_o_numero_completo(srv, casa):
+    assert ig.enviar("whatsapp", "(48) 99999-0000", "oi") == "enviado"
+    p = casa.de("POST", "/_interno/enviar")[0]
+    assert p["b"] == {"usuario": "thiago", "para": ["5548999990000"], "texto": "oi", "simular": False}
+    assert p["h"]["authorization"] == "Bearer tok-servico"
+
+
+def test_estado_do_whatsapp_do_maus_e_conferido_sem_mandar_nada(srv, casa):
+    assert cx.whatsapp_estado() == {"configurado": True, "estado": "open", "via": "maus"}
+    assert casa.de("POST", "/_interno/enviar")[0]["b"]["simular"] is True
+    casa.respostas[("POST", "/_interno/enviar")] = (409, {"erro": "o WhatsApp do dono não está conectado"})
+    assert cx.whatsapp_estado()["estado"] == "close"
+
+
+def test_maus_que_nao_entrega_vira_erro_e_nao_enviado(srv, casa):
+    casa.respostas[("POST", "/_interno/enviar")] = (200, {"ok": False, "enviados": 0})
+    assert ig.enviar("whatsapp", "48999990000", "oi") == "erro"
+
+
+def test_painel_manda_trocar_o_numero_no_maus_e_nao_mostra_qr(srv, casa):
+    _, h, _ = req(f"{srv}/entrar", f"token={ADMIN}".encode(), {"Content-Type": "application/x-www-form-urlencoded"})
+    html = req(f"{srv}/painel/conexoes", cab={"Cookie": h["Set-Cookie"].split(";")[0]})[2].decode()
+    assert "já conectou no maus" in html and "whatsapp/qr" not in html

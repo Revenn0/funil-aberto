@@ -89,9 +89,19 @@ def test_comprador_entra_na_area_de_membros_e_marca_aula(srv):
     app.liberar(pid)
     token = n.membro_por_email("ana@exemplo.com")["token"]
     st, _, b = req(f"{srv}/m/{token}")
+    assert st == 200 and "Módulo 1: a oferta" in b.decode() and f"/m/{token}/aula/m1a1" in b.decode()
+    st, _, b = req(f"{srv}/m/{token}/aula/m1a1")
     assert st == 200 and "Quem compra e por quê" in b.decode()
-    req(f"{srv}/m/{token}/feito", b"aula=m1a1", {"Content-Type": "application/x-www-form-urlencoded"})
+    st, h, _ = req(f"{srv}/m/{token}/feito", b"aula=m1a1", {"Content-Type": "application/x-www-form-urlencoded"})
+    assert st == 303 and h["Location"] == f"/m/{token}/aula/m1a1"
     assert n.aulas_feitas(n.membro_por_email("ana@exemplo.com")["id"]) == {"m1a1"}
+
+
+def test_aula_de_produto_que_o_membro_nao_comprou_nao_abre(srv):
+    pid = comprar(srv)
+    app.liberar(pid)
+    token = n.membro_por_email("ana@exemplo.com")["token"]
+    assert req(f"{srv}/m/{token}/aula/pl1")[0] == 404  # aula da planilha, que só vem com o order bump
 
 
 def test_token_de_membro_inventado_nao_abre_area(srv):

@@ -45,7 +45,23 @@ def _http(metodo: str, url: str, corpo: dict | None = None, cabecalhos: dict | N
     return json.loads(bruto or b"{}")
 
 
-# ---------------- WhatsApp (Evolution API) ----------------
+# ---------------- WhatsApp: o número que o dono já conectou no maus (maus-conexoes) ----------------
+# Na Genesis o WhatsApp do dono já está pareado na Evolution da casa, pela página Conexões do maus. Reaproveitar a rota
+# interna /_interno/enviar evita um segundo QR, herda o teto de 300/dia e o modo simular, e não entrega ao funil a chave
+# da Evolution da casa (que mexe em todas as instâncias).
+
+def _casa() -> tuple[str, str, str] | None:
+    url, tok, usu = (os.environ.get(k) for k in ("CONEXOES_URL", "CONEXOES_SERVICO_TOKEN", "CONEXOES_USUARIO"))
+    return (url.rstrip("/"), tok, usu) if url and tok and usu else None
+
+
+def _casa_enviar(para: list[str], texto: str, simular: bool) -> dict:
+    url, tok, usu = _casa()
+    return _http("POST", f"{url}/_interno/enviar", {"usuario": usu, "para": para, "texto": texto, "simular": simular},
+                 {"Authorization": f"Bearer {tok}"})
+
+
+# ---------------- WhatsApp (Evolution API própria) ----------------
 
 def _evo() -> tuple[str, str, str] | None:
     url, chave = os.environ.get("EVOLUTION_URL"), os.environ.get("EVOLUTION_KEY")
@@ -56,6 +72,13 @@ def _evo() -> tuple[str, str, str] | None:
 
 def whatsapp_estado() -> dict:
     """{configurado, estado: open|connecting|close|ausente, instancia}. Não cria nada."""
+    if _casa():
+        # simular=true confere que o número do dono está conectado (a rota recusa com 409 se não estiver) sem mandar nada.
+        try:
+            _casa_enviar(["eu"], "teste de conexão", simular=True)
+            return {"configurado": True, "estado": "open", "via": "maus"}
+        except ErroConexao as ex:
+            return {"configurado": True, "estado": "close" if "409" in str(ex) else "erro", "via": "maus", "erro": str(ex)}
     e = _evo()
     if not e:
         return {"configurado": False, "estado": "simulado"}
@@ -99,6 +122,11 @@ def _enviados_hoje() -> int:
 
 
 def whatsapp_enviar(para: str, texto: str) -> str:
+    if _casa():
+        r = _casa_enviar([n.telefone_e164(para)], texto, simular=False)
+        if not r.get("enviados"):
+            raise ErroConexao("o WhatsApp não aceitou a mensagem")
+        return "enviado"
     e = _evo()
     if not e:
         if os.environ.get("WA_CLOUD_TOKEN") and os.environ.get("WA_PHONE_ID"):

@@ -18,6 +18,7 @@ import hashlib
 import hmac
 import json
 import os
+import re
 import sys
 import threading
 import time
@@ -101,22 +102,30 @@ def pg_vsl(p: dict) -> str:
 
 
 def pg_checkout(p: dict, erro: str = "") -> str:
-    return pg.checkout(marca(), p, erro)
+    return pg.checkout(marca(), p, n.order_bump(p), erro)
 
 
 def pg_pix(p: dict, ped: dict) -> str:
     cfg = p.get("pix", {})
     codigo = pix.copia_e_cola(cfg["chave"], cfg["nome"], cfg["cidade"], ped["valor"], txid=ped["id"].replace("_", "")[:25])
-    return pg.pix_pagina(marca(), p, ped, codigo, cx.telegram_link(ped["id"]))
+    nomes = [(n.produto(s) or {"nome": s})["nome"] for s in n.itens_do_pedido(ped)]
+    return pg.pix_pagina(marca(), p, ped, codigo, cx.telegram_link(ped["id"]), nomes)
+
+
+def _produtos_do(m: dict) -> list[dict]:
+    return [p for p in (n.produto(s) for s in n.produtos_do_membro(m["id"])) if p]
 
 
 def pg_membros(m: dict) -> str:
-    produtos = [p for p in (n.produto(s) for s in n.produtos_do_membro(m["id"])) if p]
-    return pg.membros(marca(), m, produtos, n.aulas_feitas(m["id"]), m["token"])
+    return pg.membros(marca(), m, _produtos_do(m), n.aulas_feitas(m["id"]), m["token"])
+
+
+def pg_aula(m: dict, aula_id: str) -> str | None:
+    return pg.aula(marca(), m, _produtos_do(m), aula_id, n.aulas_feitas(m["id"]), m["token"])
 
 
 def pg_painel() -> str:
-    return pg.painel(n.resumo(), n.funil(), n.pedidos_recentes(), n.mensagens(20))
+    return pg.painel(n.resumo(), n.funil(), n.pedidos_recentes(), n.mensagens(20), n.vendas_por_dia(14))
 
 
 TOOLKITS = ("gmail", "googlesheets", "hubspot", "notion", "slack", "googlecalendar", "airtable", "trello")
@@ -142,7 +151,8 @@ def pg_conexoes(aviso: str = "") -> str:
 pg_qr, pg_entrar = pg.qr_whatsapp, pg.entrar
 
 # Arquivos servidos de static/: lista fechada de tipos, nunca caminho com "..".
-ESTATICOS = {".css": "text/css; charset=utf-8", ".js": "application/javascript; charset=utf-8", ".woff2": "font/woff2"}
+ESTATICOS = {".css": "text/css; charset=utf-8", ".js": "application/javascript; charset=utf-8", ".woff2": "font/woff2",
+             ".webp": "image/webp", ".mp4": "video/mp4"}
 CSP = ("default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; media-src 'self' https:; "
        "font-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self' https:")
 
@@ -168,6 +178,19 @@ class H(BaseHTTPRequestHandler):
             self.send_header(k, v)
         self.end_headers()
         self.wfile.write(dados)
+
+    def _estatico(self, arq, tipo: str):
+        """Arquivo de static/, com Range: o Safari do iPhone só toca vídeo se o servidor responder 206 por pedaço."""
+        dados, cab = arq.read_bytes(), {"Cache-Control": "public, max-age=86400", "Accept-Ranges": "bytes"}
+        m = re.fullmatch(r"bytes=(\d*)-(\d*)", self.headers.get("Range", "").strip())
+        if not m or not (m.group(1) or m.group(2)):
+            return self._resp(200, dados, tipo, cab)
+        total = len(dados)
+        ini, fim = (int(m.group(1)), int(m.group(2) or total - 1)) if m.group(1) else (max(0, total - int(m.group(2))), total - 1)
+        if ini >= total or ini > fim:
+            return self._resp(416, b"", tipo, {**cab, "Content-Range": f"bytes */{total}"})
+        fim = min(fim, total - 1)
+        return self._resp(206, dados[ini:fim + 1], tipo, {**cab, "Content-Range": f"bytes {ini}-{fim}/{total}"})
 
     def _json(self, codigo: int, obj) -> None:
         self._resp(codigo, json.dumps(obj, ensure_ascii=False), "application/json; charset=utf-8")
@@ -197,7 +220,7 @@ class H(BaseHTTPRequestHandler):
                 arq = AQUI.joinpath(*partes)
                 tipo = ESTATICOS.get(arq.suffix)
                 if tipo and arq.is_file():
-                    return self._resp(200, arq.read_bytes(), tipo, {"Cache-Control": "public, max-age=86400"})
+                    return self._estatico(arq, tipo)
             if caminho == "/saude":
                 return self._json(200, {"ok": True, "versao": VERSAO})
             if partes[0] == "v" and len(partes) == 2 and (p := n.produto(partes[1])):
@@ -206,11 +229,12 @@ class H(BaseHTTPRequestHandler):
                 ped = n.pedido(q.get("pedido", "")) if q.get("pedido") else None
                 if ped and ped["produto"] == p["slug"]:
                     return self._resp(200, pg_pix(p, ped))
-                if p.get("link_pagamento"):  # gateway externo (Stripe, Genesis Pagar, Mercado Pago)
-                    return self._resp(302, "", extra={"Location": p["link_pagamento"]})
                 return self._resp(200, pg_checkout(p))
             if partes[0] == "m" and len(partes) == 2 and (m := n.membro_por_token(partes[1])):
                 return self._resp(200, pg_membros(m), extra={"Cache-Control": "no-store"})
+            if (partes[0] == "m" and len(partes) == 4 and partes[2] == "aula" and (m := n.membro_por_token(partes[1]))
+                    and (pagina := pg_aula(m, partes[3]))):
+                return self._resp(200, pagina, extra={"Cache-Control": "no-store"})
             if partes[:2] == ["api", "pedido"] and len(partes) == 3 and (ped := n.pedido(partes[2])):
                 return self._json(200, {"status": ped["status"]})  # só o status: o id é o segredo de quem comprou
             if caminho == "/entrar":
@@ -252,15 +276,20 @@ class H(BaseHTTPRequestHandler):
                 f = dict(urllib.parse.parse_qsl(corpo.decode()))
                 vid = n.visitante(f.get("vid") or None, {}, self._ip(), self.headers.get("User-Agent", ""))
                 try:
-                    ped = n.criar_pedido(p["slug"], vid, f.get("nome", ""), f.get("email", ""), f.get("telefone", ""), "pix")
+                    if f.get("email2") is not None and f.get("email2", "").strip().lower() != f.get("email", "").strip().lower():
+                        raise ValueError("Os dois e-mails não são iguais. Confira para o acesso não se perder.")
+                    ped = n.criar_pedido(p["slug"], vid, f.get("nome", ""), f.get("email", ""), f.get("telefone", ""), "pix",
+                                         com_bump=f.get("bump") == "1")
                 except ValueError as ex:
                     return self._resp(400, pg_checkout(p, str(ex)))
                 ig.enviar_capi(ig.evento_capi("InitiateCheckout", ped, _visitante(vid), f"{base_url()}/c/{p['slug']}"))
                 cx.disparar("checkout", _contexto(ped, p))
                 return self._resp(303, "", extra={"Location": f"/c/{p['slug']}?pedido={ped['id']}"})
             if partes[0] == "m" and len(partes) == 3 and partes[2] == "feito" and (m := n.membro_por_token(partes[1])):
-                n.marcar_aula(m["id"], dict(urllib.parse.parse_qsl(corpo.decode())).get("aula", ""))
-                return self._resp(303, "", extra={"Location": f"/m/{m['token']}"})
+                aula_id = dict(urllib.parse.parse_qsl(corpo.decode())).get("aula", "")
+                n.marcar_aula(m["id"], aula_id)
+                volta = f"/m/{m['token']}/aula/{urllib.parse.quote(aula_id)}" if pg_aula(m, aula_id) else f"/m/{m['token']}"
+                return self._resp(303, "", extra={"Location": volta})
             if caminho == "/api/webhook/pagamento":
                 if not assinatura_ok(corpo, self.headers.get("X-Assinatura", "")):
                     return self._json(401, {"erro": "assinatura"})
@@ -392,7 +421,8 @@ def main(argv: list[str]) -> None:
     threading.Thread(target=_laco_recuperacao, daemon=True).start()
     porta = int(os.environ.get("PORT", "8080"))
     print(f"funil-aberto {VERSAO} em http://0.0.0.0:{porta}")
-    ThreadingHTTPServer(("0.0.0.0", porta), H).serve_forever()
+    # BIND=127.0.0.1 quando o contêiner usa a rede do host: sem isso a porta abriria em todas as interfaces da máquina.
+    ThreadingHTTPServer((os.environ.get("BIND", "0.0.0.0"), porta), H).serve_forever()
 
 
 if __name__ == "__main__":

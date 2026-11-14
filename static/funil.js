@@ -21,6 +21,29 @@
     if (bt) bt.addEventListener("click", function () { ev("cta_clique"); });
   }
 
+  // Prazo da oferta: conta até a data que o vendedor pôs no config (igual para todo mundo, não reinicia por visita).
+  var prazo = $("#prazo");
+  if (prazo) {
+    var fim = Date.parse(prazo.dataset.ate), rel = $("#relogio");
+    var dois = function (x) { return (x < 10 ? "0" : "") + x; };
+    var tique = function () {
+      var r = Math.floor((fim - Date.now()) / 1000);
+      if (!(r > 0)) { prazo.hidden = true; return false; }
+      var d = Math.floor(r / 86400), h = Math.floor(r % 86400 / 3600), mi = Math.floor(r % 3600 / 60), se = r % 60;
+      rel.textContent = (d ? d + "d " : "") + dois(h) + ":" + dois(mi) + ":" + dois(se);
+      prazo.hidden = false; return true;
+    };
+    if (tique()) setInterval(tique, 1000);
+  }
+
+  // Total com o order bump: só mostra a soma; o preço que vale é o do servidor.
+  var bump = $("#bump"), total = $("#total"), base = $("[data-base]");
+  if (bump && total && base) {
+    var fmt = function (v) { return "R$ " + v.toFixed(2).replace(".", ",").replace(/\B(?=(\d{3})+(?!\d))/g, "."); };
+    var atualiza = function () { total.textContent = fmt(parseFloat(base.dataset.base) + (bump.checked ? parseFloat(bump.dataset.valor) : 0)); };
+    bump.addEventListener("change", atualiza);
+  }
+
   var vid = $("#vid"), m = document.cookie.match(/fa_vid=([^;]+)/);
   if (vid && m) vid.value = m[1];
 
