@@ -19,6 +19,7 @@ import hmac
 import json
 import os
 import re
+import signal
 import sys
 import threading
 import time
@@ -222,7 +223,7 @@ class H(BaseHTTPRequestHandler):
                 if tipo and arq.is_file():
                     return self._estatico(arq, tipo)
             if caminho == "/saude":
-                return self._json(200, {"ok": True, "versao": VERSAO})
+                return self._json(200, {"ok": True, "versao": VERSAO, "processo": os.getpid()})
             if partes[0] == "v" and len(partes) == 2 and (p := n.produto(partes[1])):
                 return self._resp(200, pg_vsl(p))
             if partes[0] == "c" and len(partes) == 2 and (p := n.produto(partes[1])):
@@ -412,17 +413,78 @@ def _laco_recuperacao():
             print(f"recuperacao falhou: {type(ex).__name__}", file=sys.stderr)
 
 
+class Servidor(ThreadingHTTPServer):
+    # A fila padrão do socketserver é 5: com 64 clientes chegando juntos o kernel recusava a conexão e o navegador
+    # só tentava de novo 1 a 2 s depois (p99 de 2 s medido em 15/11 com 64 clientes).
+    request_queue_size = 512
+    daemon_threads = True
+
+
+def _servir(servidor: Servidor, com_laco: bool) -> None:
+    if com_laco:
+        threading.Thread(target=_laco_recuperacao, daemon=True).start()
+    servidor.serve_forever()
+
+
+def _supervisionar(servidor: Servidor, workers: int, laco: bool) -> None:
+    """WORKERS > 1: o pai só supervisiona. Os filhos dividem o mesmo socket (o kernel distribui as conexões), cada
+    um com o seu núcleo de CPU; filho que cai nasce de novo. Só o filho 0 roda o laço da recuperação, e a reserva
+    atômica de etapa (nucleo.reservar_etapa) garante uma mensagem só mesmo se duas rodadas se cruzarem."""
+    filhos: dict[int, int] = {}
+    parar = False
+
+    def nascer(i: int) -> None:
+        pid = os.fork()
+        if pid == 0:
+            signal.signal(signal.SIGTERM, signal.SIG_DFL)
+            signal.signal(signal.SIGINT, signal.SIG_DFL)
+            try:
+                _servir(servidor, laco and i == 0)
+            finally:
+                os._exit(0)
+        filhos[pid] = i
+
+    def ao_terminar(*_):
+        nonlocal parar
+        parar = True
+        for pid in list(filhos):
+            try:
+                os.kill(pid, signal.SIGTERM)
+            except ProcessLookupError:
+                pass
+
+    for i in range(workers):
+        nascer(i)
+    signal.signal(signal.SIGTERM, ao_terminar)
+    signal.signal(signal.SIGINT, ao_terminar)
+    while filhos:
+        try:
+            pid, _ = os.wait()
+        except ChildProcessError:
+            break
+        i = filhos.pop(pid, None)
+        if i is not None and not parar:
+            nascer(i)
+
+
 def main(argv: list[str]) -> None:
     if argv[1:2] == ["tick"]:
         print(json.dumps(ig.rodar_recuperacao(base_url()), ensure_ascii=False))
         return
-    n.db()
-    threading.Thread(target=_laco_recuperacao, daemon=True).start()
+    n.db()       # schema e migração uma vez, antes de qualquer fork
+    n.fechar()   # conexão SQLite não atravessa fork
     porta = int(os.environ.get("PORT", "8080"))
-    print(f"funil-aberto {VERSAO} em http://0.0.0.0:{porta}")
+    workers = max(1, int(os.environ.get("WORKERS", "1")))
+    # FUNIL_RECUPERACAO_LACO=0 quando quem roda a recuperação é um agendador de fora (`python3 app.py tick` ou
+    # POST /api/admin/recuperacao): com o processo escalando a zero, o laço interno dormiria junto.
+    laco = os.environ.get("FUNIL_RECUPERACAO_LACO", "1") != "0"
+    print(f"funil-aberto {VERSAO} em http://0.0.0.0:{porta} ({workers} processo(s))", flush=True)
     # BIND=127.0.0.1 quando o contêiner usa a rede do host: sem isso a porta abriria em todas as interfaces da máquina.
-    servidor = ThreadingHTTPServer((os.environ.get("BIND", "0.0.0.0"), porta), H)  # noqa: S104 (contêiner; BIND restringe)
-    servidor.serve_forever()
+    servidor = Servidor((os.environ.get("BIND", "0.0.0.0"), porta), H)  # noqa: S104 (contêiner; BIND restringe)
+    if workers == 1 or not hasattr(os, "fork"):
+        _servir(servidor, laco)
+    else:
+        _supervisionar(servidor, workers, laco)
 
 
 if __name__ == "__main__":

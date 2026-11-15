@@ -37,7 +37,7 @@ Um PR só entra com os três verdes. O CI (`.github/workflows/ci.yml`) roda exat
 | `static/` | `estilo.css`, `funil.js` (CTA da VSL, cronômetro, QR, Pix), `qrcode.js` (MIT), fontes OFL, `demo/` (imagens e vídeo da demo, com créditos) | biblioteca por CDN |
 | `docs/` | banners do README (claro e escuro) e `telas/` com os prints; refaça os prints quando a tela mudar | imagem de terceiro sem licença |
 | `site/` | a página de conceito (https://funil.fabweb.io), estática | o app |
-| `tests/` | `test_funil.py` (o funil inteiro), `test_conexoes.py` (provedores falsos em HTTP), `test_telas.py` (CSP, formato BRL, vídeo com Range), `test_bump.py`, `test_regras_do_repo.py` (as regras deste arquivo que dá para conferir) | rede de verdade |
+| `tests/` | `test_funil.py` (o funil inteiro), `test_conexoes.py` (provedores falsos em HTTP), `test_telas.py` (CSP, formato BRL, vídeo com Range), `test_bump.py`, `test_concorrencia.py` (schema uma vez, reserva atômica da recuperação, fila do socket, `WORKERS`), `test_regras_do_repo.py` (as regras deste arquivo que dá para conferir) | rede de verdade |
 | `.github/` | CI, modelos de PR e de issue | — |
 
 ## Regras que o código cobra (e por quê)
@@ -59,6 +59,20 @@ Cada uma tem teste. Se o teste reclamar, conserte o código; não afrouxe o test
 8. **Webhook só com assinatura** (`X-Assinatura` = HMAC-SHA256 do corpo com `WEBHOOK_SECRET`), e marcar pago é idempotente.
 9. **Dado pessoal mínimo (LGPD).** A Meta recebe só hash (sha256). O `log_message` do servidor não grava IP nem caminho.
 10. **O mapa acima cita todo arquivo `.py` e toda pasta** (`test_mapa_do_agents_md_...`). Criou módulo? Ponha uma linha na tabela.
+
+## Carga e concorrência (medido em 15/11, máquina de 4 núcleos, 64 clientes juntos)
+
+| | 1 processo | `WORKERS=4` |
+|---|---|---|
+| checkout (cria pedido) | 305/s, p99 251 ms | 1.456/s, p99 94 ms |
+| tracker | 745/s, p99 128 ms | 1.746/s, p99 93 ms |
+| página da VSL | 872/s, p99 105 ms | 2.252/s, p99 71 ms |
+
+Zero erros nos dois. Antes do conserto eram 34 erros em 8 s no checkout e p99 de 2 s (schema rodando em toda conexão e
+fila do socket de 5). `WORKERS` = processos dividindo o mesmo socket, um por núcleo; o SQLite em WAL aguenta vários
+processos na mesma máquina. Mais de uma máquina pede banco compartilhado (só o `nucleo.py` muda). Regras que valem para
+quem mexer aqui: nada de DDL fora da 1ª conexão do processo; toda etapa que manda mensagem é **reservada** antes
+(`reservar_etapa`), nunca "lê e depois soma".
 
 ## Como fazer as coisas comuns
 

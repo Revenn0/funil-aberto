@@ -112,7 +112,8 @@ def rodar_recuperacao(base_url: str) -> list[dict]:
     """Uma rodada da sequência de recuperação. Idempotente por etapa (o contador avança antes de reenviar)."""
     feitos = []
     for ped, etapa in n.recuperacao_pendente():
-        n.avancar_recuperacao(ped["id"])
+        if not n.reservar_etapa(ped["id"], ped["etapa_recuperacao"]):
+            continue  # outra rodada (outro processo) já pegou esta etapa
         para = {"whatsapp": ped["telefone"], "email": ped["email"],
                 "telegram": n.telegram_do_pedido(ped["id"]) or ""}.get(etapa["canal"], "")
         if not para:

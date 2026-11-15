@@ -156,6 +156,8 @@ Testes: `python3 -m pytest -q tests` (sobem o servidor de verdade e percorrem o 
 | `EMAIL_VIA` | `composio` manda o e-mail de acesso pelo Gmail conectado na Composio | SMTP |
 | `COMPOSIO_USUARIO`, `COMPOSIO_URL` | dono das contas conectadas na Composio; outro endereço da API (testes) | derivado do `BASE_URL`; a API pública |
 | `CONEXOES_URL`, `CONEXOES_SERVICO_TOKEN`, `CONEXOES_USUARIO` | WhatsApp por um serviço de conexões que já tem o número ligado (o `maus-conexoes` da Genesis): o funil não abre outro QR | Evolution própria ou Cloud API |
+| `WORKERS` | processos que servem juntos o mesmo socket (um por núcleo de CPU); só o 1º roda a recuperação | `1` |
+| `FUNIL_RECUPERACAO_LACO` | `0` desliga o laço interno da recuperação, para um agendador de fora chamar `python3 app.py tick` | `1` |
 | `FUNIL_TETO_WHATSAPP_DIA` | teto de mensagens de WhatsApp em 24 h | `300` |
 | `TELEGRAM_API` | outro endereço da Bot API (testes) | `https://api.telegram.org` |
 

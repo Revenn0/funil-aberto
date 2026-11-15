@@ -57,17 +57,38 @@ def data_dir() -> Path:
     return d
 
 
+# Bancos cujo schema este processo já conferiu. O servidor abre uma thread por conexão HTTP, e cada thread
+# abre a sua conexão SQLite: rodar o SCHEMA (DDL) em toda conexão travava o banco para escrita a cada
+# visitante novo (medido em 15/11: 34 erros em 8 s com 64 clientes no checkout).
+_SCHEMA_PRONTO: set[str] = set()
+_TRAVA_SCHEMA = threading.Lock()
+
+
 def db() -> sqlite3.Connection:
     caminho = str(data_dir() / "funil.db")
     con = getattr(_LOCAL, "con", None)
     if con is None or getattr(_LOCAL, "caminho", None) != caminho:
-        con = sqlite3.connect(caminho, timeout=10, isolation_level=None)
+        con = sqlite3.connect(caminho, timeout=15, isolation_level=None)
         con.row_factory = sqlite3.Row
-        con.execute("pragma journal_mode=wal")
-        con.executescript(SCHEMA)
-        _migrar(con)
+        if caminho not in _SCHEMA_PRONTO:
+            with _TRAVA_SCHEMA:
+                if caminho not in _SCHEMA_PRONTO:
+                    con.execute("pragma journal_mode=wal")
+                    con.executescript(SCHEMA)
+                    _migrar(con)
+                    _SCHEMA_PRONTO.add(caminho)
+        # WAL + NORMAL: durável no commit do checkpoint, sem fsync a cada escrita (o padrão FULL dobrava a latência).
+        con.execute("pragma synchronous=normal")
         _LOCAL.con, _LOCAL.caminho = con, caminho
     return con
+
+
+def fechar() -> None:
+    """Fecha a conexão desta thread. Chamado antes de um fork: conexão SQLite herdada por outro processo corrompe o lock."""
+    con = getattr(_LOCAL, "con", None)
+    if con is not None:
+        con.close()
+    _LOCAL.__dict__.clear()
 
 
 def _migrar(con: sqlite3.Connection) -> None:
@@ -294,8 +315,14 @@ def recuperacao_pendente(agora: float | None = None) -> list[tuple[dict, dict]]:
     return saida
 
 
-def avancar_recuperacao(pid: str) -> None:
-    db().execute("update pedido set etapa_recuperacao = etapa_recuperacao + 1 where id=? and status='pendente'", (pid,))
+def reservar_etapa(pid: str, etapa: int) -> bool:
+    """Reserva a etapa `etapa` da recuperação deste pedido; só uma rodada ganha.
+
+    Antes o contador subia sem conferir de onde vinha: duas rodadas juntas (laço, `tick` ou o endpoint, ou dois
+    processos) liam a mesma etapa, as duas mandavam a mensagem e o contador pulava a etapa seguinte."""
+    cur = db().execute("update pedido set etapa_recuperacao = ? where id=? and status='pendente' and etapa_recuperacao=?",
+                       (etapa + 1, pid, etapa))
+    return cur.rowcount == 1
 
 
 def registrar_mensagem(canal: str, para: str, texto: str, motivo: str, pedido_id: str, status: str, erro: str = "") -> None:
