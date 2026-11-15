@@ -222,7 +222,7 @@ class H(BaseHTTPRequestHandler):
                 tipo = ESTATICOS.get(arq.suffix)
                 if tipo and arq.is_file():
                     return self._estatico(arq, tipo)
-            if caminho == "/saude":
+            if caminho in ("/saude", "/health"):  # /health: as sondas do cluster (sistema_novo.py) chamam esse nome
                 return self._json(200, {"ok": True, "versao": VERSAO, "processo": os.getpid()})
             if partes[0] == "v" and len(partes) == 2 and (p := n.produto(partes[1])):
                 return self._resp(200, pg_vsl(p))

@@ -1,0 +1,20 @@
+{
+  "nome": "funil-aberto",
+  "tipo": "web",
+  "molde": "sistema-web",
+  "descricao": "Operação de venda online open source num processo só: tracker, VSL, checkout Pix sem gateway, área de membros, recuperação de carrinho e robô.",
+  "titular": "genesis",
+  "conectores": [],
+  "host": "funil.genesisinnovation.com.br",
+  "escala_zero": true,
+  "criado_em": "2026-11-15",
+  "porta": 8080,
+  "volume_gi": 1,
+  "egresso_https": true,
+  "memoria_limite_mi": 192,
+  "env": {
+    "BASE_URL": "https://funil.genesisinnovation.com.br",
+    "EMAIL_VIA": "composio",
+    "WORKERS": "1"
+  }
+}

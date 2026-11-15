@@ -179,3 +179,9 @@ def test_paginas_do_funil_abrem(srv):
     pid = comprar(srv)
     _, _, b = req(f"{srv}/c/metodo-demo?pedido={pid}")
     assert "br.gov.bcb.pix" in b.decode()
+
+
+def test_sonda_do_cluster_em_health_sem_resposta_reinicia_o_pod_em_loop(srv):
+    # O sistema_novo.py gera readiness e liveness em /health; sem a rota o pod nunca fica pronto.
+    st, _, corpo = req(f"{srv}/health", json_=False)
+    assert st == 200 and b'"ok": true' in corpo
